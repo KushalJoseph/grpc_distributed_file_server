@@ -17,15 +17,15 @@ int main(int argc, char *argv[]) {
     }
 
     // Open a file
-    std::string input_filename(argv[1]);
-    int input_fd = open(input_filename.c_str(), O_RDONLY);
-    char *buf = (char *)malloc(8 * 1024);
-    ssize_t nread = pread(input_fd, (void *)buf, 1024, 0);
-    if (nread != 1024) {
-        fprintf(stderr, "pread() error.\n");
-        return -1;
-    }
-    close(input_fd);
+    // std::string input_filename(argv[1]);
+    // int input_fd = open(input_filename.c_str(), O_RDONLY);
+    // char *buf = (char *)malloc(8 * 1024);
+    // ssize_t nread = pread(input_fd, (void *)buf, 1024, 0);
+    // if (nread != 1024) {
+    //     fprintf(stderr, "pread() error.\n");
+    //     return -1;
+    // }
+    // close(input_fd);
 
     // Initialize the PFS client
     int client_id = pfs_initialize();
@@ -42,34 +42,34 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
-    // Open the PFS file in write mode
-    int pfs_fd = pfs_open("pfs_file1", 2);
-    if (pfs_fd == -1) {
-        fprintf(stderr, "Error opening PFS file.\n");
-        return -1;
-    }
+    // // Open the PFS file in write mode
+    // int pfs_fd = pfs_open("pfs_file1", 2);
+    // if (pfs_fd == -1) {
+    //     fprintf(stderr, "Error opening PFS file.\n");
+    //     return -1;
+    // }
 
-    // Write the byte 0~1023 to pfs_file1 at offset 0
-    ret = pfs_write(pfs_fd, (void *)buf, 1024, 0);
-    if (ret == -1) {
-        fprintf(stderr, "Write error to PFS file.\n");
-        return -1;
-    } else
-        printf("%s:%s: Wrote %d bytes to the PFS file.\n", __FILE__, __func__, ret);
+    // // Write the byte 0~1023 to pfs_file1 at offset 0
+    // ret = pfs_write(pfs_fd, (void *)buf, 1024, 0);
+    // if (ret == -1) {
+    //     fprintf(stderr, "Write error to PFS file.\n");
+    //     return -1;
+    // } else
+    //     printf("%s:%s: Wrote %d bytes to the PFS file.\n", __FILE__, __func__, ret);
 
-    ret = pfs_close(pfs_fd);
-    if (ret == -1) {
-        fprintf(stderr, "Error closing PFS file.\n");
-        return -1;
-    }
+    // ret = pfs_close(pfs_fd);
+    // if (ret == -1) {
+    //     fprintf(stderr, "Error closing PFS file.\n");
+    //     return -1;
+    // }
 
-    ret = pfs_finish(client_id);
-    if (ret == -1) {
-        fprintf(stderr, "pfs_finish() failed.\n");
-        return -1;
-    }
+    // ret = pfs_finish(client_id);
+    // if (ret == -1) {
+    //     fprintf(stderr, "pfs_finish() failed.\n");
+    //     return -1;
+    // }
 
-    free(buf);
-    printf("%s:%s: Finish!\n", __FILE__, __func__);
+    // free(buf);
+    // printf("%s:%s: Finish!\n", __FILE__, __func__);
     return 0;
 }

@@ -4,16 +4,25 @@ syntax = "proto3";
 
 package pfsmeta;
 
-service exampleservice {
-    rpc ConnectTest (exampledata) returns (retdata) {}
+service PFSMetadataServer {
+    rpc Initialize (InitRequest) returns (InitResponse) {}
+    rpc CreateFile (CreateFileRequest) returns (CreateFileResponse);
 }
 
-message exampledata {
-    int32 aaa = 1;
-    int32 bbb = 2;
-    int32 ccc = 3;
+message InitRequest {
+    int32 placeholder = 1;
 }
 
-message retdata {
-    int32 ddd = 1;
+message InitResponse {
+    string message = 2;
+}
+
+message CreateFileResponse {
+    string message = 1;   
+    int32 status_code = 2; 
+}
+
+message CreateFileRequest {
+    string filename = 1;   
+    int32 stripe_width = 3;
 }

@@ -21,9 +21,7 @@
 
 struct pfs_filerecipe {
     int stripe_width;
-
-    // Additional...
-
+    std::vector<std::vector<int>> distribution; // {fileserver#, startByte (incl), endByte (incl)}
 };
 
 struct pfs_metadata {
