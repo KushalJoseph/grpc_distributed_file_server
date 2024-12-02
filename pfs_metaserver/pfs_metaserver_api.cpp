@@ -5,7 +5,6 @@
 std::unique_ptr<pfsmeta::PFSMetadataServer::Stub> connect_to_metaserver() {
     // Step 0: Read the server's address and port from a file or configuration
     std::filesystem::path current_path = std::filesystem::current_path();
-    std::cout << "Current working directory: " << current_path << std::endl;
 
     std::ifstream config_file("pfs_list.txt");
     if (!config_file.is_open()) {
@@ -31,17 +30,12 @@ void metaserver_api_initialize() {
         return;
     }
     
-    // Step 2: Create a request and response object for Initialize
     pfsmeta::InitRequest request;
     pfsmeta::InitResponse response;
 
-    // Step 3: Set up the context for the call
     grpc::ClientContext context;
 
-    // Step 4: Make the RPC call to Initialize
     grpc::Status status = stub->Initialize(&context, request, &response);
-
-    // Step 5: Handle the response from the metadata server
     if (status.ok()) {
         printf("Initialize RPC succeeded: %s\n", response.message().c_str());
     } else {
@@ -52,28 +46,97 @@ void metaserver_api_initialize() {
 void metaserver_api_create(const char *filename, int stripe_width) {
     printf("%s: called to create file.\n", __func__);
 
-    // Step 2: Create the connection to the metadata server using the modularized function
     auto stub = connect_to_metaserver();
     if (!stub) {
         std::cout << "Failed to connect to metaserver" << std::endl;
         return;
     }
 
-    // Step 3: Create a request and response object for CreateFile
     pfsmeta::CreateFileRequest request; pfsmeta::CreateFileResponse response;
     request.set_filename(filename);
     request.set_stripe_width(stripe_width);
 
-    // Step 4: Set up the context for the call
     grpc::ClientContext context;
 
-    // Step 5: Make the RPC call to CreateFile
     grpc::Status status = stub->CreateFile(&context, request, &response);
-
-    // Step 6: Handle the response from the metadata server
     if (status.ok()) {
         printf("CreateFile RPC succeeded: %s\n", response.message().c_str());
     } else {
         fprintf(stderr, "CreateFile RPC failed: %s\n", status.error_message().c_str());
     }
 }
+
+int metaserver_api_open(const char *filename, int mode) {
+    printf("%s: called to open file.\n", __func__);
+
+    auto stub = connect_to_metaserver();
+    if (!stub) {
+        std::cout << "Failed to connect to metaserver" << std::endl;
+        return -1;
+    }
+
+    pfsmeta::OpenFileRequest request; pfsmeta::OpenFileResponse response;
+    request.set_filename(filename);
+    request.set_mode(mode);
+
+    grpc::ClientContext context;
+
+    grpc::Status status = stub->OpenFile(&context, request, &response);
+    if (status.ok()) {
+        printf("OpenFile RPC succeeded: %s\n", response.message().c_str());
+        return response.file_descriptor();
+    } else {
+        fprintf(stderr, "OpenFile RPC failed: %s\n", status.error_message().c_str());
+    }
+    return -1;
+}
+
+int metaserver_api_close(int file_descriptor) {
+    printf("%s: called to close file.\n", __func__);
+
+    auto stub = connect_to_metaserver();
+    if (!stub) {
+        std::cout << "Failed to connect to metaserver" << std::endl;
+        return -1;
+    }
+
+    pfsmeta::CloseFileRequest request; pfsmeta::CloseFileResponse response;
+    request.set_file_descriptor(file_descriptor);
+
+    grpc::ClientContext context;
+
+    grpc::Status status = stub->CloseFile(&context, request, &response);
+    if (status.ok()) {
+        printf("CloseFile RPC succeeded: %s\n", response.message().c_str());
+        return 0;
+    } else {
+        fprintf(stderr, "CreateFile RPC failed: %s\n", status.error_message().c_str());
+    }
+    return -1;
+}
+
+// int metaserver_api_write(int fd, const void *buf, size_t num_bytes, off_t offset) {
+//     printf("%s: called to open file.\n", __func__);
+
+//     auto stub = connect_to_metaserver();
+//     if (!stub) {
+//         std::cout << "Failed to connect to metaserver" << std::endl;
+//         return -1;
+//     }
+
+//     pfsmeta::OpenFileRequest request; pfsmeta::OpenFileResponse response;
+//     request.set_filename(filename);
+//     request.set_mode(mode);
+
+//     grpc::ClientContext context;
+
+//     grpc::Status status = stub->OpenFile(&context, request, &response);
+//     if (status.ok()) {
+//         printf("CreateFile RPC succeeded: %s\n", response.message().c_str());
+//         return response.file_descriptor();
+//     } else {
+//         fprintf(stderr, "CreateFile RPC failed: %s\n", status.error_message().c_str());
+//     }
+//     return -1;
+// }
+

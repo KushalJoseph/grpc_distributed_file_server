@@ -4,16 +4,30 @@ syntax = "proto3";
 
 package pfsfile;
 
-service myservice {
-    rpc ConnectTest (something) returns (ack) {}
+service PFSFileServer {
+    rpc Ping (PingRequest) returns (PingResponse) {}
+    rpc Initialize (InitRequest) returns (InitResponse) {}
+    rpc CreateFilePart (CreateFilePartRequest) returns (CreateFilePartResponse) {}
 }
 
-message something {
-    int32 aaa = 1;
-    int32 bbb = 2;
-    bytes data = 3;
+message PingRequest {
+}
+message PingResponse {
+    string message = 1;
 }
 
-message ack {
-    int32 val = 1;
+message InitRequest {
+    int32 placeholder = 1;
+}
+message InitResponse {
+    string message = 1;
+}
+
+message CreateFilePartRequest {
+    string filename = 1;
+    bytes data = 2;
+}
+message CreateFilePartResponse {
+    string message = 1;
+    string status_code = 2;
 }

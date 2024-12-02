@@ -2,84 +2,99 @@
 #include "pfs_cache.hpp"
 #include "pfs_metaserver/pfs_metaserver_api.hpp"
 #include "pfs_fileserver/pfs_fileserver_api.hpp"
+#include <grpcpp/grpcpp.h>  
+#include "../pfs_proto/pfs_metaserver.pb.h"     
+#include "../pfs_proto/pfs_metaserver.grpc.pb.h"  
+#include "../pfs_proto/pfs_fileserver.pb.h"    
+#include "../pfs_proto/pfs_fileserver.grpc.pb.h" 
 
-// bool is_server_online(const std::string& server_address) {
-//     std::shared_ptr<grpc::Channel> channel = grpc::CreateChannel(server_address, grpc::InsecureChannelCredentials());
-//     std::unique_ptr<pfsmeta::PFSMetadataServer::Stub> stub = pfsmeta::PFSMetadataServer::NewStub(channel);
+bool is_server_online(const std::string& server_address, std::string serverType) {
+    if (serverType == "meta") {
+        std::shared_ptr<grpc::Channel> channel = grpc::CreateChannel(server_address, grpc::InsecureChannelCredentials());
+        std::unique_ptr<pfsmeta::PFSMetadataServer::Stub> metadataStub = pfsmeta::PFSMetadataServer::NewStub(channel);
 
-//     // Create a simple request to check the server's availability
-//     pfsmeta::InitRequest request;
-//     pfsmeta::InitResponse response;
-//     grpc::ClientContext context;
+        pfsmeta::PingRequest request;
+        pfsmeta::PingResponse response;
+        grpc::ClientContext context;
 
-//     // Perform a simple RPC call (e.g., Initialize) to check if the server is responsive
-//     grpc::Status status = stub->Initialize(&context, request, &response);
-    
-//     if (status.ok()) {
-//         std::cout << "Server " << server_address << " is online." << std::endl;
-//         return true;
-//     } else {
-//         std::cerr << "Failed to connect to server " << server_address << ": " << status.error_message() << std::endl;
-//         return false;
-//     }
-// }
+        grpc::Status status = metadataStub->Ping(&context, request, &response);
+        if (status.ok()) {
+            std::cout << serverType << " Server " << server_address << " is online." << std::endl;
+            return true;
+        } else {
+            std::cerr << "Failed to connect to server " << server_address << ": " << status.error_message() << std::endl;
+            return false;
+        }
+    } else if (serverType == "file") {
+        std::shared_ptr<grpc::Channel> channel = grpc::CreateChannel(server_address, grpc::InsecureChannelCredentials());
+        std::unique_ptr<pfsfile::PFSFileServer::Stub> fileserverStub = pfsfile::PFSFileServer::NewStub(channel);
 
-void verify_all_servers_online() {
-    // // Read pfs_list.txt
-    // std::ifstream pfs_list("pfs_list.txt");
-    // if (!pfs_list.is_open()) {
-    //     std::cerr << "Failed to open pfs_list.txt file!" << std::endl;
-    //     return -1;
-    // }
+        pfsfile::PingRequest request;
+        pfsfile::PingResponse response;
+        grpc::ClientContext context;
 
-    // // Check if all servers (NUM_FILE_SERVERS + 1) are online
-    // std::string server_address;
-    // std::vector<std::string> server_addresses;
+        grpc::Status status = fileserverStub->Ping(&context, request, &response);
+        if (status.ok()) {
+            std::cout << serverType << " Server " << server_address << " is online." << std::endl;
+            return true;
+        } else {
+            std::cerr << "Failed to connect to server " << server_address << ": " << status.error_message() << std::endl;
+            return false;
+        }
+    }
+    return false;
+}
 
-    // // Read all server addresses from the file
-    // while (std::getline(pfs_list, server_address)) {
-    //     server_addresses.push_back(server_address);
-    // }
+int verify_all_servers_online() {
+    // Read pfs_list.txt
+    std::ifstream pfs_list("pfs_list.txt");
+    if (!pfs_list.is_open()) {
+        std::cerr << "Failed to open pfs_list.txt file!" << std::endl;
+        return -1;
+    }
 
-    // // Step 2: Check if all servers (NUM_FILE_SERVERS + the metaserver) are online
-    // if (server_addresses.empty()) {
-    //     std::cerr << "No servers listed in pfs_list.txt!" << std::endl;
-    //     return -1;
-    // }
+    // Check if all servers (NUM_FILE_SERVERS + 1) are online
+    std::string server_address;
+    std::vector<std::string> server_addresses;
+    while (std::getline(pfs_list, server_address)) {
+        server_addresses.push_back(server_address);
+    }
 
-    // std::cout << "Checking if servers are online..." << std::endl;
+    if (server_addresses.empty()) {
+        std::cerr << "No servers listed in pfs_list.txt!" << std::endl;
+        return -1;
+    }
 
-    // // Check the metaserver (first server in the list)
-    // std::string metaserver_address = server_addresses[0];
-    // if (!is_server_online(metaserver_address)) {
-    //     std::cerr << "Metadata server is not online!" << std::endl;
-    //     return -1;
-    // }
+    std::cout << "Checking if servers are online..." << std::endl;
 
-    // for (size_t i = 1; i < server_addresses.size(); ++i) {
-    //     std::string fileserver_address = server_addresses[i];
-    //     if (!is_server_online(fileserver_address)) {
-    //         std::cerr << "File server " << fileserver_address << " is not online!" << std::endl;
-    //         std::cout << "DOING NOTHING FOR NOW" << std::endl;
-    //         // return -1;
-    //     }
-    // }
-
-    // // All servers are online
-    // std::cout << "All servers are online!" << std::endl;
+    std::string metaserver_address = server_addresses[0];
+    if (!is_server_online(metaserver_address, "meta")) {
+        std::cerr << "Metadata server is not online!" << std::endl;
+        return -1;
+    }
+    for (size_t i = 1; i <= NUM_FILE_SERVERS; i++) {
+        std::string fileserver_address = server_addresses[i];
+        if (!is_server_online(fileserver_address, "file")) {
+            std::cerr << "File server " << fileserver_address << " is not online!" << std::endl;
+            return -1;
+        }
+    }
+    std::cout << "All servers are online!" << std::endl;
+    return 0;
 }
 
 int pfs_initialize() {
-    verify_all_servers_online();
+    if(verify_all_servers_online() == -1){
+        std::cerr << "Servers not online" << std::endl;
+        return -1;
+    }
     
     // Connect with metaserver using gRPC
     metaserver_api_initialize();
 
     // Connect with all fileservers (NUM_FILE_SERVERS) using gRPC
-    // for (int i = 0; i < NUM_FILE_SERVERS; ++i) {
-    //     fileserver_api_temp();
-    // }
-
+    fileserver_api_initialize();
+    
     static int client_id = 0;
     client_id++;
     return client_id;
@@ -99,8 +114,9 @@ int pfs_create(const char *filename, int stripe_width) {
 }
 
 int pfs_open(const char *filename, int mode) {
-
-    return 0;
+    int fd = metaserver_api_open(filename, mode);
+    std::cout << "Received FD: " << fd << std::endl;
+    return fd;
 }
 
 int pfs_read(int fd, void *buf, size_t num_bytes, off_t offset) {
@@ -126,7 +142,7 @@ int pfs_write(int fd, const void *buf, size_t num_bytes, off_t offset) {
 }
 
 int pfs_close(int fd) {
-
+    metaserver_api_close(fd);
     return 0;
 }
 

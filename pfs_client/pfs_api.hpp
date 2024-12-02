@@ -15,13 +15,25 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <sstream>
 
 #include "pfs_common/pfs_config.hpp"
 #include "pfs_common/pfs_common.hpp"
 
 struct pfs_filerecipe {
     int stripe_width;
-    std::vector<std::vector<int>> distribution; // {fileserver#, startByte (incl), endByte (incl)}
+    std::vector<std::vector<int>> distribution; // {fileserver#: startByte (incl), endByte (incl)}
+
+    std::string to_string() const {
+        std::ostringstream oss;
+        oss << "Stripe Width: " << stripe_width << "\n";
+        oss << "Distribution:\n";
+        for (size_t i=0; i<distribution.size(); i++) {
+            oss << "  FileServer " << i 
+                    << ": [" << distribution[i][0] << ", " << distribution[i][1] << "]\n";
+        }
+        return oss.str();
+    }
 };
 
 struct pfs_metadata {
@@ -33,7 +45,22 @@ struct pfs_metadata {
     struct pfs_filerecipe recipe;
 
     // Additional...
+    std::string to_string() const {
+        std::ostringstream oss;
+        oss << "Filename: " << filename << "\n";
+        oss << "File Size: " << file_size << " bytes\n";
+        
+        // char ctime_str[20], mtime_str[20];
+        // struct tm* ctm = localtime(&ctime);
+        // struct tm* mtm = localtime(&mtime);
+        // strftime(ctime_str, sizeof(ctime_str), "%Y-%m-%d %H:%M:%S", ctm);
+        // strftime(mtime_str, sizeof(mtime_str), "%Y-%m-%d %H:%M:%S", mtm);
+        // oss << "Creation Time: " << ctime_str << "\n";
+        // oss << "Modification Time: " << mtime_str << "\n";
 
+        oss << "File Recipe:\n" << recipe.to_string();
+        return oss.str();
+    }
 };
 
 struct pfs_execstat {

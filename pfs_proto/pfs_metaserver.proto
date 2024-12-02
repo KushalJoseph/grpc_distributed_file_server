@@ -5,24 +5,60 @@ syntax = "proto3";
 package pfsmeta;
 
 service PFSMetadataServer {
+    rpc Ping (PingRequest) returns (PingResponse) {}
     rpc Initialize (InitRequest) returns (InitResponse) {}
-    rpc CreateFile (CreateFileRequest) returns (CreateFileResponse);
+    rpc CreateFile (CreateFileRequest) returns (CreateFileResponse) {}
+    rpc OpenFile (OpenFileRequest) returns (OpenFileResponse) {}
+    rpc CloseFile (CloseFileRequest) returns (CloseFileResponse) {}
+    rpc WriteToFile (WriteToFileRequest) returns (WriteToFileResponse) {}
+}
+
+message PingRequest {
+}
+message PingResponse {
+    string message = 1;
 }
 
 message InitRequest {
     int32 placeholder = 1;
 }
-
 message InitResponse {
-    string message = 2;
+    string message = 1;
 }
 
+message CreateFileRequest {
+    string filename = 1;   
+    int32 stripe_width = 2;
+}
 message CreateFileResponse {
     string message = 1;   
     int32 status_code = 2; 
 }
 
-message CreateFileRequest {
-    string filename = 1;   
-    int32 stripe_width = 3;
+message OpenFileRequest {
+    string filename = 1;
+    int32 mode = 2;
 }
+message OpenFileResponse {
+    string message = 1;
+    int32 file_descriptor = 2;
+    int32 status_code = 3;
+}
+
+message CloseFileRequest {
+    int32 file_descriptor = 1;
+}
+message CloseFileResponse {
+    string message = 1;
+    int32 status_code = 2;
+}
+
+message WriteToFileRequest {
+    string filename = 1;
+    int32 numBytes = 2;
+}
+message WriteToFileResponse {
+    string message = 1;
+    int32 status_code = 2;
+}
+

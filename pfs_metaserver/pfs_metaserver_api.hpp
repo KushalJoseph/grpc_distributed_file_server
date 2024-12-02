@@ -9,3 +9,8 @@
 void metaserver_api_initialize();
 
 void metaserver_api_create(const char *filename, int stripe_width);
+
+int metaserver_api_open(const char *filename, int mode);
+
+int metaserver_api_close(int mode);
+
