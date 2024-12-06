@@ -8,6 +8,8 @@
 #include <string>
 #include <cstdlib>
 #include <cstdio>
+#include <iostream>
+#include <cassert>
 
 using grpc::Server;
 using grpc::ServerBuilder;
@@ -18,6 +20,49 @@ using namespace pfsfile;
 // Define the gRPC service implementation
 class PFSFileServerImpl final : public PFSFileServer::Service {
 private:
+    void writeToLocalFile(const std::string& filename, 
+                        const std::pair<int, int>& range_within_buffer,
+                        const std::pair<int, int>& range_within_local_file,
+                        const std::string& buffer) {
+        // Assert that the range sizes are equal
+        assert((range_within_buffer.second - range_within_buffer.first) == 
+            (range_within_local_file.second - range_within_local_file.first));
+
+        std::string file_path = "./files/" + filename;
+        std::cout << "Writing buf[" << range_within_buffer.first << " - " << range_within_buffer.second 
+                << "] to local " << file_path << ", starting from " << range_within_local_file.first 
+                << ", till " << range_within_local_file.second << std::endl;
+
+        // Open the file in read/write mode
+        // std::fstream file(file_path, std::ios::in | std::ios::out | std::ios::binary);
+
+        // if (!file.is_open()) {
+        //     // If the file doesn't exist, create it and open it
+        //     file.open(filename, std::ios::out | std::ios::binary);
+        //     if (!file.is_open()) {
+        //         std::cerr << "Error opening file: " << filename << std::endl;
+        //         return;
+        //     }
+        // }
+
+        // // Get the current size of the file
+        // file.seekg(0, std::ios::end);
+        // int current_file_size = file.tellg();
+
+        // // If the file's current size is less than the starting position, extend the file
+        // if (current_file_size < range_within_local_file.first) {
+        //     file.seekp(range_within_local_file.first - 1, std::ios::beg);
+        //     file.write("\0", 1);  // Write a single null byte to extend the file
+        // }
+
+        // // Now write the buffer to the file at the appropriate location
+        // file.seekp(range_within_local_file.first, std::ios::beg);
+        // file.write(buffer.substr(range_within_buffer.first, range_within_buffer.second - range_within_buffer.first).c_str(), 
+        //         range_within_buffer.second - range_within_buffer.first);
+
+        // // Close the file after writing
+        // file.close();
+    }
 
 public:
     Status Ping(ServerContext* context, const PingRequest* request, PingResponse* reply) override {
@@ -29,6 +74,30 @@ public:
     Status Initialize(ServerContext* context, const InitRequest* request, InitResponse* reply) override {
         reply->set_message("Connection successful! File server is active.");
         printf("%s: Received Initialize RPC call.\n", __func__);
+        return Status::OK;
+    }
+
+    Status WriteFile(ServerContext* context, const WriteFileRequest* request, WriteFileResponse* reply) override {
+        printf("%s: Received WriteFile RPC call.\n", __func__);
+
+        std::string buf = request->buf();
+        std::string filename = request->chunk_filename();
+        int chunk_number = request->chunk_number();
+        int start_byte = request->start_byte();
+        int end_byte = request->end_byte();
+        int num_bytes = request->num_bytes();
+        int offset = request->offset();
+        // assert num bytes
+
+        std::pair<int, int> range_within_local_file = {start_byte - chunk_number * 1024, end_byte - chunk_number * 1024};
+        std::pair<int, int> range_within_buffer = {start_byte - offset, end_byte - offset};
+
+        assert(range_within_local_file.second - range_within_local_file.first == range_within_buffer.second - range_within_buffer.first);
+        writeToLocalFile(filename, range_within_buffer, range_within_local_file, buf);
+
+        std::string msgToSend = "Writing local " + filename + ", starting from " + std::to_string(start_byte) + ", till " + std::to_string(end_byte) + ", total bytes: " + std::to_string(buf.size());
+        reply->set_message(msgToSend);
+        reply->set_bytes_written(-1); // write code
         return Status::OK;
     }
 };

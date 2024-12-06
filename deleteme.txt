@@ -90,3 +90,6 @@ Token distribution is completely independent.
 "filename.txt" --> 200 bytes.
 client1 requests read 40-69. Give. Note [40-69] reserved.
 client2 requests read 60-80. Give. Note [60-]
+
+
+NOTE: DONT CREATE STUB FOR EVERY REQUEST! KEEP IT GLOBAL!

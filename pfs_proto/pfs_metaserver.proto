@@ -69,7 +69,7 @@ message WriteInstruction {
 message WriteToFileResponse {
     string message = 1;
     repeated WriteInstruction instructions = 2;
-    int32 bytes_written = 3;
+    string filename = 3;
 }
 
 
@@ -88,6 +88,6 @@ message ReadInstruction {
 message ReadFileResponse {
     string message = 1;
     repeated ReadInstruction instructions = 2;
-    int32 bytes_read = 3;
+    string filename = 3;
 }
 

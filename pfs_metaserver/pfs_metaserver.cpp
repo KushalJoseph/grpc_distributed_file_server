@@ -221,7 +221,7 @@ public:
 
         std::string replyMsg = "Done";
         reply->set_message(replyMsg);
-        reply->set_bytes_written(bytes_written); 
+        reply->set_filename(filename);
         for (const struct Chunk &instr: write_instructions) {
             WriteInstruction* write_instruction = reply->add_instructions();
             write_instruction->set_chunk_number(instr.chunk_number);
@@ -282,7 +282,7 @@ public:
 
         std::string replyMsg = "Done";
         reply->set_message(replyMsg);
-        reply->set_bytes_read(bytes_read); 
+        reply->set_filename(filename); 
         for (const struct Chunk &instr: read_instructions) {
             ReadInstruction* read_instruction = reply->add_instructions();
             read_instruction->set_chunk_number(instr.chunk_number);

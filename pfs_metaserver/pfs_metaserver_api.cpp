@@ -116,13 +116,13 @@ int metaserver_api_close(int file_descriptor) {
     return -1;
 }
 
-std::pair<std::vector<struct Chunk>, int> metaserver_api_write(int fd, const void *buf, size_t num_bytes, off_t offset) {
+std::pair<std::vector<struct Chunk>, std::string> metaserver_api_write(int fd, const void *buf, size_t num_bytes, off_t offset) {
     printf("%s: called to write to file.\n", __func__);
 
     auto stub = connect_to_metaserver();
     if (!stub) {
         std::cout << "Failed to connect to metaserver" << std::endl;
-        return {{}, -1};
+        return {{}, "FAIL"};
     }
 
     pfsmeta::WriteToFileRequest request; pfsmeta::WriteToFileResponse response;
@@ -149,20 +149,20 @@ std::pair<std::vector<struct Chunk>, int> metaserver_api_write(int fd, const voi
             instructions.push_back(chunk);
         }
         std::cout << "I have received the instructions from server" << std::endl;
-        return {instructions, response.bytes_written()};
+        return {instructions, response.filename()};
     } else {
         fprintf(stderr, "WriteToFile RPC failed: %s\n", status.error_message().c_str());
     }
-    return {{}, -1};
+    return {{}, "FAIL"};
 }
 
-std::pair<std::vector<struct Chunk>, int> metaserver_api_read(int fd, const void *buf, size_t num_bytes, off_t offset) {
+std::pair<std::vector<struct Chunk>, std::string> metaserver_api_read(int fd, const void *buf, size_t num_bytes, off_t offset) {
     printf("%s: called to read from file.\n", __func__);
 
     auto stub = connect_to_metaserver();
     if (!stub) {
         std::cout << "Failed to connect to metaserver" << std::endl;
-        return {{}, -1};
+        return {{}, "FAIL"};
     }
 
     pfsmeta::ReadFileRequest request; pfsmeta::ReadFileResponse response;
@@ -189,11 +189,11 @@ std::pair<std::vector<struct Chunk>, int> metaserver_api_read(int fd, const void
             instructions.push_back(chunk);
         }
         std::cout << "I have received the instructions from server" << std::endl;
-        return {instructions, response.bytes_read()};
+        return {instructions, response.filename()};
     } else {
         fprintf(stderr, "WriteToFile RPC failed: %s\n", status.error_message().c_str());
     }
-    return {{}, -1};
+    return {{}, "FAIL"};
 }
 
 

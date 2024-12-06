@@ -7,7 +7,7 @@ package pfsfile;
 service PFSFileServer {
     rpc Ping (PingRequest) returns (PingResponse) {}
     rpc Initialize (InitRequest) returns (InitResponse) {}
-    rpc CreateFilePart (CreateFilePartRequest) returns (CreateFilePartResponse) {}
+    rpc WriteFile (WriteFileRequest) returns (WriteFileResponse) {}
 }
 
 message PingRequest {
@@ -23,11 +23,16 @@ message InitResponse {
     string message = 1;
 }
 
-message CreateFilePartRequest {
-    string filename = 1;
-    bytes data = 2;
+message WriteFileRequest {
+    bytes buf = 1;
+    string chunk_filename = 2;
+    int32 chunk_number = 3;
+    int32 start_byte = 4;
+    int32 end_byte = 5;
+    int32 num_bytes = 6;
+    int32 offset = 7;
 }
-message CreateFilePartResponse {
+message WriteFileResponse {
     string message = 1;
-    string status_code = 2;
+    int32 bytes_written = 2;
 }

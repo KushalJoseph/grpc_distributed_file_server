@@ -45,12 +45,12 @@ bool is_server_online(const std::string& server_address, std::string serverType)
     return false;
 }
 
-int verify_all_servers_online() {
+std::vector<std::string> get_server_addresses() {
     // Read pfs_list.txt
     std::ifstream pfs_list("pfs_list.txt");
     if (!pfs_list.is_open()) {
         std::cerr << "Failed to open pfs_list.txt file!" << std::endl;
-        return -1;
+        return {};
     }
 
     // Check if all servers (NUM_FILE_SERVERS + 1) are online
@@ -59,6 +59,11 @@ int verify_all_servers_online() {
     while (std::getline(pfs_list, server_address)) {
         server_addresses.push_back(server_address);
     }
+    return server_addresses;
+}
+
+int verify_all_servers_online() {
+    std::vector<std::string> server_addresses = get_server_addresses();
 
     if (server_addresses.empty()) {
         std::cerr << "No servers listed in pfs_list.txt!" << std::endl;
@@ -84,16 +89,19 @@ int verify_all_servers_online() {
 }
 
 int pfs_initialize() {
-    // if(verify_all_servers_online() == -1){
-    //     std::cerr << "Servers not online" << std::endl;
-    //     return -1;
-    // }
+    if(verify_all_servers_online() == -1){
+        std::cerr << "Servers not online" << std::endl;
+        return -1;
+    }
     
     // Connect with metaserver using gRPC
     metaserver_api_initialize();
 
+    std::vector<std::string> server_addresses = get_server_addresses();
     // Connect with all fileservers (NUM_FILE_SERVERS) using gRPC
-    // fileserver_api_initialize();
+    for (size_t i = 1; i < server_addresses.size(); i++) {
+        fileserver_api_initialize(server_addresses[i]);
+    }
     
     static int client_id = 0;
     client_id++;
@@ -115,7 +123,6 @@ int pfs_create(const char *filename, int stripe_width) {
 
 int pfs_open(const char *filename, int mode) {
     int fd = metaserver_api_open(filename, mode);
-    std::cout << "Received FD: " << fd << std::endl;
     return fd;
 }
 
@@ -127,8 +134,8 @@ int pfs_read(int fd, void *buf, size_t num_bytes, off_t offset) {
 
     // ...
 
-    std::pair<std::vector<struct Chunk>, int> read_instructions = metaserver_api_read(fd, buf, num_bytes, offset);
-    if (read_instructions.second == -1) {
+    std::pair<std::vector<struct Chunk>, std::string> read_instructions = metaserver_api_read(fd, buf, num_bytes, offset);
+    if (read_instructions.second == "FAIL") {
         return -1;
     }
     // received instructions
@@ -139,7 +146,7 @@ int pfs_read(int fd, void *buf, size_t num_bytes, off_t offset) {
 
     // FOR instruction in instructions: fileserver_api_read();
 
-    return read_instructions.second;
+    return 0;
 }
 
 int pfs_write(int fd, const void *buf, size_t num_bytes, off_t offset) {
@@ -150,20 +157,30 @@ int pfs_write(int fd, const void *buf, size_t num_bytes, off_t offset) {
 
     // ...
 
-    std::pair<std::vector<struct Chunk>, int> instructions = metaserver_api_write(fd, buf, num_bytes, offset);
-    if (instructions.second == -1) {
+    std::pair<std::vector<struct Chunk>, std::string> instructions = metaserver_api_write(fd, buf, num_bytes, offset);
+    if (instructions.second == "FAIL") {
         return -1;
     }
-    // received instructions
-    for(struct Chunk chunk: instructions.first){
-        std::cout << "Instructed to write chunk number " << chunk.chunk_number << " to File Server " << chunk.server_number << ". Start from " << chunk.start_byte << " till " << chunk.end_byte << std::endl;
-    }
     
+    std::string filename = instructions.second;
+    std::vector<std::string> server_addresses = get_server_addresses();
+    for(struct Chunk &chunk: instructions.first){
+        std::string chunk_filename = std::to_string(chunk.server_number) + "_" + filename + "_" + std::to_string(chunk.chunk_number);
+        std::cout << "Instructed to write to file called " << chunk_filename << " to File Server " << chunk.server_number << ". Start from " << chunk.start_byte << " till " << chunk.end_byte << std::endl;
+        
+        std::string fileserver_address = server_addresses[chunk.server_number + 1]; // +1 since 0 is metaserver
+        fileserver_api_write(fileserver_address, 
+                                buf, 
+                                chunk_filename, 
+                                chunk.chunk_number, 
+                                num_bytes, 
+                                chunk.start_byte, 
+                                chunk.end_byte,
+                                offset
+        );
+    }
 
-    // FOR instruction in instructions: fileserver_api_write();
-
-
-    return instructions.second;
+    return 0;
 }
 
 int pfs_close(int fd) {

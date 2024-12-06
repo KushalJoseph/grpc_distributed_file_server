@@ -36,7 +36,7 @@ int main(int argc, char *argv[]) {
 
     // Create a PFS file
     int ret;
-    ret = pfs_create("pfs_file1", 4);
+    ret = pfs_create("pfs_file1", 2); // stripe_width
     if (ret == -1) {
         fprintf(stderr, "Unable to create a PFS file.\n");
         return -1;
@@ -60,7 +60,15 @@ int main(int argc, char *argv[]) {
 
 
     // Write the byte 0~1023 to pfs_file1 at offset 0
-    ret = pfs_write(pfs_fd, (void *)buf, 2000, 0);
+    ret = pfs_write(pfs_fd, (void *)buf, 4000, 0);
+    if (ret == -1) {
+        fprintf(stderr, "Write error to PFS file.\n");
+        return -1;
+    } else
+        printf("%s:%s: Wrote %d bytes to the PFS file.\n", __FILE__, __func__, ret);
+
+    // every request's buffer is fresh
+    ret = pfs_write(pfs_fd, (void *)buf, 1000, 1000);
     if (ret == -1) {
         fprintf(stderr, "Write error to PFS file.\n");
         return -1;
@@ -82,12 +90,12 @@ int main(int argc, char *argv[]) {
     // } else
     //     printf("%s:%s: Read %d bytes from the PFS file.\n", __FILE__, __func__, ret);
 
-    ret = pfs_read(pfs_fd, (void *)buf, 10000, 1000);
-    if (ret == -1) {
-        fprintf(stderr, "Read error to PFS file.\n");
-        return -1;
-    } else
-        printf("%s:%s: Read %d bytes from the PFS file.\n", __FILE__, __func__, ret);
+    // ret = pfs_read(pfs_fd, (void *)buf, 10000, 1000);
+    // if (ret == -1) {
+    //     fprintf(stderr, "Read error to PFS file.\n");
+    //     return -1;
+    // } else
+    //     printf("%s:%s: Read %d bytes from the PFS file.\n", __FILE__, __func__, ret);
 
     // ret = pfs_read(pfs_fd, (void *)buf, 1069, 69);
     // if (ret == -1) {
