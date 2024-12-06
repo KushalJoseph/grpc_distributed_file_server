@@ -1,0 +1,2 @@
+//Doubts
+If a user writes 10000 bytes, can they later remove the last 2000 bytes? 

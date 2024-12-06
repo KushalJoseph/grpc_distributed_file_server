@@ -20,10 +20,11 @@ const int MODE_WRITE = 2;
 
 class PFSMetadataServerImpl final : public PFSMetadataServer::Service {
 private:
-    std::unordered_map<std::string, pfs_metadata> files;
-    std::unordered_map<int, std::pair<std::string, int>> descriptor;
-    std::unordered_map<std::string, int> fileNameToDescriptor;
-    
+    std::unordered_map<std::string, struct pfs_metadata> files;             // filename: Metadata
+
+    std::unordered_map<int, std::pair<std::string, int>> descriptor; // descriptor : <filename, mode>
+    std::unordered_map<std::string, int> fileNameToDescriptor;       // filename: descriptor
+
     int next_fd = 3;
     std::set<int> used_fds;
 
@@ -51,14 +52,18 @@ public:
             return Status(grpc::StatusCode::INVALID_ARGUMENT, msg);
         }
 
-        pfs_metadata file_metadata;
-        pfs_filerecipe recipe;
+        if (files.find(filename) != files.end()) {
+            std::string msg = "Cannot create file. File already exists!";
+            std::cerr << msg << std::endl;
+            reply->set_message(msg);
+            reply->set_status_code(1);
+            return Status(grpc::StatusCode::INVALID_ARGUMENT, msg);
+        }
+
+        struct pfs_metadata file_metadata;
+        struct pfs_filerecipe recipe;
         recipe.stripe_width = stripe_width;
-        recipe.distribution = std::vector<std::vector<int>> (NUM_FILE_SERVERS, std::vector<int> (2)); // Initialize distribution with NUM_FILE_SERVERS and fill with {0, 0} indicating an empty file
-        for (int i=0; i<NUM_FILE_SERVERS; i++) {
-            if(i < stripe_width) recipe.distribution[i][0] = 0, recipe.distribution[i][1] = 0;
-            else recipe.distribution[i][0] = -1, recipe.distribution[i][1] = -1; // don't use this file server
-        }        
+        recipe.chunks = std::vector<struct Chunk> (); // initialize empty chunks vector      
 
         std::strncpy(file_metadata.filename, filename.c_str(), sizeof(file_metadata.filename) - 1);
         file_metadata.filename[sizeof(file_metadata.filename) - 1] = '\0'; // Ensure null termination
@@ -86,7 +91,7 @@ public:
         }
         if(fileNameToDescriptor.find(filename) != fileNameToDescriptor.end()){
             int fd = fileNameToDescriptor[filename];
-            if(descriptor[fd].second == 2) {
+            if(descriptor[fd].second == MODE_WRITE) {
                 std::string msg = "File is being written to ";
                 std::cerr << msg << std::endl;
                 reply->set_message(msg);
@@ -100,9 +105,9 @@ public:
             int fd = next_fd++;
             used_fds.insert(fd);
 
-            reply->set_message("File opened for you");
+            reply->set_message("File opened for you to read.");
             reply->set_file_descriptor(fd);
-            printf("%s: Received Initialize RPC call.\n", __func__);
+            printf("%s: Received Open RPC call to read.\n", __func__);
 
             descriptor[fd] = {filename, MODE_READ};
             fileNameToDescriptor[filename] = fd;
@@ -111,9 +116,9 @@ public:
             int fd = next_fd++;
             used_fds.insert(fd);
 
-            reply->set_message("File opened for you");
+            reply->set_message("File opened for you to write.");
             reply->set_file_descriptor(fd);
-            printf("%s: Received Initialize RPC call.\n", __func__);
+            printf("%s: Received Open RPC call to write.\n", __func__);
 
             descriptor[fd] = {filename, MODE_WRITE};
             fileNameToDescriptor[filename] = fd;
@@ -121,9 +126,13 @@ public:
         }
     }
 
+    bool checkIfFileIsOpen(int fd) {
+        return descriptor.find(fd) != descriptor.end();
+    }
+
     Status CloseFile(ServerContext* context, const pfsmeta::CloseFileRequest* request, pfsmeta::CloseFileResponse* reply) override {        
         int fd = request->file_descriptor();
-        if (descriptor.find(fd) == descriptor.end()) {
+        if (checkIfFileIsOpen(fd) == false) {
             std::string msg = "File may already be closed!";
             std::cerr << msg << std::endl;
             reply->set_message(msg);
@@ -132,6 +141,7 @@ public:
         }
         std::string filename = descriptor[fd].first;
 
+        // remove all records of the file being open, i.e, erase from the maps.
         fileNameToDescriptor.erase(filename);
         descriptor.erase(fd);
 
@@ -141,27 +151,147 @@ public:
         return Status::OK;
     }
 
-    // Status WriteToFile(ServerContext* context, const pfsmeta::WriteToFileRequest* request, pfsmeta::WriteToFileResponse* reply) override {        
-    //     std::string filename = request->filename();
-    //     if (files.find(filename) == files.end()) {
-    //         std::cerr << "No file with " << filename << " exists!" << std::endl;
-    //         return Status(grpc::StatusCode::INVALID_ARGUMENT, msg);
-    //     }
-    //     int numBytesNew = request->numBytes();
-    //     int numBytesOld = files[filename].file_size;
 
-    //     pfs_filerecipe recipe = files[filename];
-    //     int stripe_width = recipe.stripe_width;
+    Status WriteToFile(ServerContext* context, const pfsmeta::WriteToFileRequest* request, pfsmeta::WriteToFileResponse* reply) override {        
+        int fd = request->file_descriptor();
+        std::string buf = request->buf();
+        int num_bytes = request->num_bytes();
+        int offset = request->offset();
+
+        std::cout << "\nrequested to write: " << num_bytes << " from " << offset << std::endl << std::endl;
         
+        if (checkIfFileIsOpen(fd) == false) {
+            std::string msg = "File is not open!";
+            std::cerr << msg << std::endl;
+            reply->set_message(msg);
+            return Status(grpc::StatusCode::INVALID_ARGUMENT, msg);
+        }
 
-    //     int bytes_per_block = PFS_BLOCK_SIZE * STRIPE_BLOCKs;
+        std::string filename = descriptor[fd].first;
+        if (files.find(filename) == files.end()) {
+            std::string msg = "File does not exist or was already deleted!";
+            std::cerr << msg << std::endl;
+            reply->set_message(msg);
+            return Status(grpc::StatusCode::INVALID_ARGUMENT, msg);
+        }
 
+        struct pfs_metadata &file_metadata = files[filename];
+        int cur_file_size = file_metadata.file_size;
+        if (offset > cur_file_size) {
+            std::string msg = "Requested Offset " + std::to_string(offset) + ", cannot be greater than current file size, " + std::to_string(cur_file_size);
+            std::cerr << msg << std::endl;
+            reply->set_message(msg);
+            return Status(grpc::StatusCode::INVALID_ARGUMENT, msg);
+        }
 
-    //     std::string replyMsg = "File " + filename + " created successfully. The current recipe distribution is: ";
-    //     reply->set_message(replyMsg);
-    //     reply->set_status_code(0);  
-    //     return Status::OK;
-    // }
+        std::vector<struct Chunk> &chunks = file_metadata.recipe.chunks;
+        int start_chunk = offset / 1024; 
+        int end_chunk = (offset + num_bytes - 1) / 1024;
+        int bytes_written = 0;
+
+        std::vector<struct Chunk> write_instructions;
+        for (int chunk_number = start_chunk; chunk_number <= end_chunk; chunk_number++) {
+            int start_byte_for_instruction = std::max(chunk_number * 1024, offset); // start from the beginning of the chunk, or from the offset.
+            int end_byte_for_instruction = std::min((chunk_number + 1) * 1024 - 1, offset + num_bytes - 1); // end of the chunk, or offset + bytes, MINIMUM
+            int server_number = chunk_number % file_metadata.recipe.stripe_width;
+
+            // check if this chunk exists
+            auto it = std::find_if(chunks.begin(), chunks.end(), [chunk_number](const Chunk& c) {
+                return c.chunk_number == chunk_number;
+            });
+            
+            struct Chunk chunk_for_instruction = Chunk{chunk_number, server_number, start_byte_for_instruction, end_byte_for_instruction};
+            bytes_written += (end_byte_for_instruction - start_byte_for_instruction + 1);
+            if (it == chunks.end()) {
+                chunks.push_back(chunk_for_instruction); // it's a brand new chunk
+                file_metadata.file_size += (end_byte_for_instruction - start_byte_for_instruction + 1);
+            } else {
+                struct Chunk& existing_chunk = *it;
+                int current_chunk_size = existing_chunk.end_byte - existing_chunk.start_byte + 1;
+                if (end_byte_for_instruction > existing_chunk.end_byte) {
+                    existing_chunk.end_byte = end_byte_for_instruction;
+                    int new_chunk_size = existing_chunk.end_byte - existing_chunk.start_byte + 1;
+                    file_metadata.file_size += (new_chunk_size - current_chunk_size);
+                }
+            }
+            write_instructions.push_back(chunk_for_instruction);
+        }    
+
+        std::cout << "\nWrite Confirmation: \n" << filename << "\n" << files[filename].to_string() << std::endl;
+
+        std::string replyMsg = "Done";
+        reply->set_message(replyMsg);
+        reply->set_bytes_written(bytes_written); 
+        for (const struct Chunk &instr: write_instructions) {
+            WriteInstruction* write_instruction = reply->add_instructions();
+            write_instruction->set_chunk_number(instr.chunk_number);
+            write_instruction->set_server_number(instr.server_number);
+            write_instruction->set_start_byte(instr.start_byte);
+            write_instruction->set_end_byte(instr.end_byte);
+        }
+        return Status::OK;
+    }
+
+    Status ReadFile(ServerContext* context, const pfsmeta::ReadFileRequest* request, pfsmeta::ReadFileResponse* reply) override {        
+        int fd = request->file_descriptor();
+        std::string buf = request->buf();
+        int num_bytes = request->num_bytes();
+        int offset = request->offset();
+
+        std::cout << "\nrequested to read: " << num_bytes << " from " << offset << std::endl << std::endl;
+        
+        if (checkIfFileIsOpen(fd) == false) {
+            std::string msg = "File is not open!";
+            std::cerr << msg << std::endl;
+            reply->set_message(msg);
+            return Status(grpc::StatusCode::INVALID_ARGUMENT, msg);
+        }
+
+        std::string filename = descriptor[fd].first;
+        if (files.find(filename) == files.end()) {
+            std::string msg = "File does not exist or was already deleted!";
+            std::cerr << msg << std::endl;
+            reply->set_message(msg);
+            return Status(grpc::StatusCode::INVALID_ARGUMENT, msg);
+        }
+
+        struct pfs_metadata &file_metadata = files[filename];
+        std::vector<struct Chunk> &chunks = file_metadata.recipe.chunks;
+        int start_chunk = offset / 1024; 
+        int end_chunk = (offset + num_bytes - 1) / 1024;
+        int bytes_read = 0;
+
+        std::vector<struct Chunk> read_instructions;
+        for (int chunk_number = start_chunk; chunk_number <= end_chunk; chunk_number++) {
+            int start_byte_for_instruction = std::max(chunk_number * 1024, offset); // start from the beginning of the chunk, or from the offset.
+            int end_byte_for_instruction = std::min((chunk_number + 1) * 1024 - 1, std::min((int) file_metadata.file_size - 1, offset + num_bytes - 1)); // end of the chunk, or end of file or, offset + bytes, MINIMUM
+            int server_number = chunk_number % file_metadata.recipe.stripe_width;
+
+            // check if this chunk exists
+            auto it = std::find_if(chunks.begin(), chunks.end(), [chunk_number](const Chunk& c) {
+                return c.chunk_number == chunk_number;
+            });
+            
+            struct Chunk chunk_for_instruction = Chunk{chunk_number, server_number, start_byte_for_instruction, end_byte_for_instruction};
+            if (it == chunks.end()) {
+                break;
+            }
+            bytes_read += (end_byte_for_instruction - start_byte_for_instruction + 1);
+            read_instructions.push_back(chunk_for_instruction);
+        }    
+
+        std::string replyMsg = "Done";
+        reply->set_message(replyMsg);
+        reply->set_bytes_read(bytes_read); 
+        for (const struct Chunk &instr: read_instructions) {
+            ReadInstruction* read_instruction = reply->add_instructions();
+            read_instruction->set_chunk_number(instr.chunk_number);
+            read_instruction->set_server_number(instr.server_number);
+            read_instruction->set_start_byte(instr.start_byte);
+            read_instruction->set_end_byte(instr.end_byte);
+        }
+        return Status::OK;
+    }
 };
 
 void RunGRPCServer(const std::string& listen_port) {

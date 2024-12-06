@@ -11,6 +11,7 @@ service PFSMetadataServer {
     rpc OpenFile (OpenFileRequest) returns (OpenFileResponse) {}
     rpc CloseFile (CloseFileRequest) returns (CloseFileResponse) {}
     rpc WriteToFile (WriteToFileRequest) returns (WriteToFileResponse) {}
+    rpc ReadFile (ReadFileRequest) returns (ReadFileResponse) {}
 }
 
 message PingRequest {
@@ -54,11 +55,39 @@ message CloseFileResponse {
 }
 
 message WriteToFileRequest {
-    string filename = 1;
-    int32 numBytes = 2;
+    int32 file_descriptor = 1;
+    bytes buf = 2; 
+    int32 num_bytes = 3;
+    int32 offset = 4;
+}
+message WriteInstruction {
+    int32 chunk_number = 1;
+    int32 server_number = 2;
+    int32 start_byte = 3;
+    int32 end_byte = 4;
 }
 message WriteToFileResponse {
     string message = 1;
-    int32 status_code = 2;
+    repeated WriteInstruction instructions = 2;
+    int32 bytes_written = 3;
+}
+
+
+message ReadFileRequest {
+    int32 file_descriptor = 1;
+    bytes buf = 2; 
+    int32 num_bytes = 3;
+    int32 offset = 4;
+}
+message ReadInstruction {
+    int32 chunk_number = 1;
+    int32 server_number = 2;
+    int32 start_byte = 3;
+    int32 end_byte = 4;
+}
+message ReadFileResponse {
+    string message = 1;
+    repeated ReadInstruction instructions = 2;
+    int32 bytes_read = 3;
 }
 

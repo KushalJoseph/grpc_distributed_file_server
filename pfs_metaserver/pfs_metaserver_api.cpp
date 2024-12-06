@@ -1,5 +1,6 @@
 #include "pfs_metaserver_api.hpp"
 #include "pfs_proto/pfs_metaserver.grpc.pb.h"
+#include "pfs_client/pfs_api.hpp"
 #include <grpcpp/grpcpp.h>
 
 std::unique_ptr<pfsmeta::PFSMetadataServer::Stub> connect_to_metaserver() {
@@ -115,28 +116,84 @@ int metaserver_api_close(int file_descriptor) {
     return -1;
 }
 
-// int metaserver_api_write(int fd, const void *buf, size_t num_bytes, off_t offset) {
-//     printf("%s: called to open file.\n", __func__);
+std::pair<std::vector<struct Chunk>, int> metaserver_api_write(int fd, const void *buf, size_t num_bytes, off_t offset) {
+    printf("%s: called to write to file.\n", __func__);
 
-//     auto stub = connect_to_metaserver();
-//     if (!stub) {
-//         std::cout << "Failed to connect to metaserver" << std::endl;
-//         return -1;
-//     }
+    auto stub = connect_to_metaserver();
+    if (!stub) {
+        std::cout << "Failed to connect to metaserver" << std::endl;
+        return {{}, -1};
+    }
 
-//     pfsmeta::OpenFileRequest request; pfsmeta::OpenFileResponse response;
-//     request.set_filename(filename);
-//     request.set_mode(mode);
+    pfsmeta::WriteToFileRequest request; pfsmeta::WriteToFileResponse response;
+    request.set_file_descriptor(fd);
 
-//     grpc::ClientContext context;
+    std::string bytes_string(static_cast<const char*>(buf), num_bytes);
+    request.set_buf(bytes_string);
+    request.set_num_bytes(num_bytes);
+    request.set_offset(offset);
 
-//     grpc::Status status = stub->OpenFile(&context, request, &response);
-//     if (status.ok()) {
-//         printf("CreateFile RPC succeeded: %s\n", response.message().c_str());
-//         return response.file_descriptor();
-//     } else {
-//         fprintf(stderr, "CreateFile RPC failed: %s\n", status.error_message().c_str());
-//     }
-//     return -1;
-// }
+    grpc::ClientContext context;
+
+    grpc::Status status = stub->WriteToFile(&context, request, &response);
+    if (status.ok()) {
+        printf("WriteFile RPC succeeded: %s\n", response.message().c_str());
+
+        std::vector<struct Chunk> instructions;
+        for (const auto& instruction: response.instructions()) {
+            Chunk chunk;
+            chunk.chunk_number = instruction.chunk_number();
+            chunk.server_number = instruction.server_number();
+            chunk.start_byte = instruction.start_byte();
+            chunk.end_byte = instruction.end_byte();
+            instructions.push_back(chunk);
+        }
+        std::cout << "I have received the instructions from server" << std::endl;
+        return {instructions, response.bytes_written()};
+    } else {
+        fprintf(stderr, "WriteToFile RPC failed: %s\n", status.error_message().c_str());
+    }
+    return {{}, -1};
+}
+
+std::pair<std::vector<struct Chunk>, int> metaserver_api_read(int fd, const void *buf, size_t num_bytes, off_t offset) {
+    printf("%s: called to read from file.\n", __func__);
+
+    auto stub = connect_to_metaserver();
+    if (!stub) {
+        std::cout << "Failed to connect to metaserver" << std::endl;
+        return {{}, -1};
+    }
+
+    pfsmeta::ReadFileRequest request; pfsmeta::ReadFileResponse response;
+    request.set_file_descriptor(fd);
+
+    std::string bytes_string(static_cast<const char*>(buf), num_bytes);
+    request.set_buf(""); // empty buffer
+    request.set_num_bytes(num_bytes);
+    request.set_offset(offset);
+
+    grpc::ClientContext context;
+
+    grpc::Status status = stub->ReadFile(&context, request, &response);
+    if (status.ok()) {
+        printf("ReadFile RPC succeeded: %s\n", response.message().c_str());
+
+        std::vector<struct Chunk> instructions;
+        for (const auto& instruction: response.instructions()) {
+            Chunk chunk;
+            chunk.chunk_number = instruction.chunk_number();
+            chunk.server_number = instruction.server_number();
+            chunk.start_byte = instruction.start_byte();
+            chunk.end_byte = instruction.end_byte();
+            instructions.push_back(chunk);
+        }
+        std::cout << "I have received the instructions from server" << std::endl;
+        return {instructions, response.bytes_read()};
+    } else {
+        fprintf(stderr, "WriteToFile RPC failed: %s\n", status.error_message().c_str());
+    }
+    return {{}, -1};
+}
+
 

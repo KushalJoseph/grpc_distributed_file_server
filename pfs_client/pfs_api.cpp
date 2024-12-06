@@ -84,16 +84,16 @@ int verify_all_servers_online() {
 }
 
 int pfs_initialize() {
-    if(verify_all_servers_online() == -1){
-        std::cerr << "Servers not online" << std::endl;
-        return -1;
-    }
+    // if(verify_all_servers_online() == -1){
+    //     std::cerr << "Servers not online" << std::endl;
+    //     return -1;
+    // }
     
     // Connect with metaserver using gRPC
     metaserver_api_initialize();
 
     // Connect with all fileservers (NUM_FILE_SERVERS) using gRPC
-    fileserver_api_initialize();
+    // fileserver_api_initialize();
     
     static int client_id = 0;
     client_id++;
@@ -127,7 +127,19 @@ int pfs_read(int fd, void *buf, size_t num_bytes, off_t offset) {
 
     // ...
 
-    return 0;
+    std::pair<std::vector<struct Chunk>, int> read_instructions = metaserver_api_read(fd, buf, num_bytes, offset);
+    if (read_instructions.second == -1) {
+        return -1;
+    }
+    // received instructions
+    for(struct Chunk chunk: read_instructions.first){
+        std::cout << "Instructed to read chunk number " << chunk.chunk_number << " from File Server " << chunk.server_number << ". Start from " << chunk.start_byte << " till " << chunk.end_byte << std::endl;
+    }
+    
+
+    // FOR instruction in instructions: fileserver_api_read();
+
+    return read_instructions.second;
 }
 
 int pfs_write(int fd, const void *buf, size_t num_bytes, off_t offset) {
@@ -138,7 +150,20 @@ int pfs_write(int fd, const void *buf, size_t num_bytes, off_t offset) {
 
     // ...
 
-    return 0;
+    std::pair<std::vector<struct Chunk>, int> instructions = metaserver_api_write(fd, buf, num_bytes, offset);
+    if (instructions.second == -1) {
+        return -1;
+    }
+    // received instructions
+    for(struct Chunk chunk: instructions.first){
+        std::cout << "Instructed to write chunk number " << chunk.chunk_number << " to File Server " << chunk.server_number << ". Start from " << chunk.start_byte << " till " << chunk.end_byte << std::endl;
+    }
+    
+
+    // FOR instruction in instructions: fileserver_api_write();
+
+
+    return instructions.second;
 }
 
 int pfs_close(int fd) {

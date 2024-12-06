@@ -36,27 +36,84 @@ int main(int argc, char *argv[]) {
 
     // Create a PFS file
     int ret;
-    ret = pfs_create("pfs_file1", 2);
+    ret = pfs_create("pfs_file1", 4);
+    if (ret == -1) {
+        fprintf(stderr, "Unable to create a PFS file.\n");
+        return -1;
+    }
+    ret = pfs_create("pfs_file2", 3);
     if (ret == -1) {
         fprintf(stderr, "Unable to create a PFS file.\n");
         return -1;
     }
 
     // Open the PFS file in write mode
-    int pfs_fd = pfs_open("pfs_file1", 2);
+    const char* file_name = (argc == 3) ? argv[2] : "pfs_file1";
+    int pfs_fd = pfs_open(file_name, 2);
     if (pfs_fd == -1) {
         fprintf(stderr, "Error opening PFS file.\n");
         return -1;
     }
-    std::cout << "FD: " << pfs_fd << std::endl;
+
+
+
+
 
     // Write the byte 0~1023 to pfs_file1 at offset 0
-    // ret = pfs_write(pfs_fd, (void *)buf, 1024, 0);
+    ret = pfs_write(pfs_fd, (void *)buf, 2000, 0);
+    if (ret == -1) {
+        fprintf(stderr, "Write error to PFS file.\n");
+        return -1;
+    } else
+        printf("%s:%s: Wrote %d bytes to the PFS file.\n", __FILE__, __func__, ret);
+
+
+    // ret = pfs_read(pfs_fd, (void *)buf, 1000, 1000);
+    // if (ret == -1) {
+    //     fprintf(stderr, "Read error to PFS file.\n");
+    //     return -1;
+    // } else
+    //     printf("%s:%s: Read %d bytes from the PFS file.\n", __FILE__, __func__, ret);
+
+    // ret = pfs_read(pfs_fd, (void *)buf, 2000, 0);
+    // if (ret == -1) {
+    //     fprintf(stderr, "Read error to PFS file.\n");
+    //     return -1;
+    // } else
+    //     printf("%s:%s: Read %d bytes from the PFS file.\n", __FILE__, __func__, ret);
+
+    ret = pfs_read(pfs_fd, (void *)buf, 10000, 1000);
+    if (ret == -1) {
+        fprintf(stderr, "Read error to PFS file.\n");
+        return -1;
+    } else
+        printf("%s:%s: Read %d bytes from the PFS file.\n", __FILE__, __func__, ret);
+
+    // ret = pfs_read(pfs_fd, (void *)buf, 1069, 69);
+    // if (ret == -1) {
+    //     fprintf(stderr, "Read error to PFS file.\n");
+    //     return -1;
+    // } else
+    //     printf("%s:%s: Read %d bytes from the PFS file.\n", __FILE__, __func__, ret);
+
+    // ret = pfs_write(pfs_fd, (void *)buf, 500, 1000);
     // if (ret == -1) {
     //     fprintf(stderr, "Write error to PFS file.\n");
     //     return -1;
     // } else
     //     printf("%s:%s: Wrote %d bytes to the PFS file.\n", __FILE__, __func__, ret);
+
+    // ret = pfs_write(pfs_fd, (void *)buf, 500, 200);
+    // if (ret == -1) {
+    //     fprintf(stderr, "Write error to PFS file.\n");
+    //     return -1;
+    // } else
+    //     printf("%s:%s: Wrote %d bytes to the PFS file.\n", __FILE__, __func__, ret);
+
+
+
+
+
 
     ret = pfs_close(pfs_fd);
     if (ret == -1) {

@@ -20,18 +20,38 @@
 #include "pfs_common/pfs_config.hpp"
 #include "pfs_common/pfs_common.hpp"
 
-struct pfs_filerecipe {
-    int stripe_width;
-    std::vector<std::vector<int>> distribution; // {fileserver#: startByte (incl), endByte (incl)}
+// for every file, define std::vector<Chunk>
+struct Chunk {
+    int chunk_number;
+    int server_number;
+    int start_byte;
+    int end_byte;
 
     std::string to_string() const {
         std::ostringstream oss;
-        oss << "Stripe Width: " << stripe_width << "\n";
-        oss << "Distribution:\n";
-        for (size_t i=0; i<distribution.size(); i++) {
-            oss << "  FileServer " << i 
-                    << ": [" << distribution[i][0] << ", " << distribution[i][1] << "]\n";
+        oss << "chunk_number: " << chunk_number << "; ";
+        oss << "server_number: " << server_number << "; ";
+        oss << "byte_range: (" << start_byte << ", " << end_byte << ")\n";
+        return oss.str();
+    }
+};
+
+struct pfs_filerecipe {
+    int stripe_width;
+    std::vector<struct Chunk> chunks; // metadata.recipe.chunks
+
+    std::string to_string() const {
+        std::ostringstream oss;
+        oss << "pfs_filerecipe { \n";
+        oss << "stripe_width: " << stripe_width << ", \n";
+        oss << "chunks: [\n";
+        for (size_t i = 0; i < chunks.size(); ++i) {
+            oss << chunks[i].to_string();
+            if (i < chunks.size() - 1) {
+                oss << "\n";
+            }
         }
+        oss << "] }\n";
         return oss.str();
     }
 };

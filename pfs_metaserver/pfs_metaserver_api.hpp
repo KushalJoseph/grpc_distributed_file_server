@@ -14,3 +14,8 @@ int metaserver_api_open(const char *filename, int mode);
 
 int metaserver_api_close(int mode);
 
+/* <instructions, bytes_written */
+std::pair<std::vector<struct Chunk>, int> metaserver_api_write(int fd, const void *buf, size_t num_bytes, off_t offset);
+
+/* <instructions, bytes_read */
+std::pair<std::vector<struct Chunk>, int> metaserver_api_read(int fd, const void *buf, size_t num_bytes, off_t offset);
