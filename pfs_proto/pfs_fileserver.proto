@@ -8,6 +8,7 @@ service PFSFileServer {
     rpc Ping (PingRequest) returns (PingResponse) {}
     rpc Initialize (InitRequest) returns (InitResponse) {}
     rpc WriteFile (WriteFileRequest) returns (WriteFileResponse) {}
+    rpc ReadFile (ReadFileRequest) returns (ReadFileResponse) {}
 }
 
 message PingRequest {
@@ -35,4 +36,18 @@ message WriteFileRequest {
 message WriteFileResponse {
     string message = 1;
     int32 bytes_written = 2;
+}
+
+message ReadFileRequest {
+    string chunk_filename = 1;
+    int32 chunk_number = 2;
+    int32 start_byte = 3;
+    int32 end_byte = 4;
+    int32 num_bytes = 5;
+    int32 offset = 6;
+}
+message ReadFileResponse {
+    string content = 1;
+    string message = 2;
+    int32 bytes_read = 3;
 }

@@ -70,3 +70,40 @@ void fileserver_api_write(std::string fileserver_address,
         fprintf(stderr, "Write file RPC failed: %s\n", status.error_message().c_str());
     }
 }
+
+void fileserver_api_read(std::string fileserver_address, 
+                    std::string &buf, 
+                    std::string chunk_filename, 
+                    int chunk_number,
+                    int num_bytes, 
+                    int start_byte, 
+                    int end_byte,
+                    int offset
+                ) {
+
+    printf("%s: called.\n", __func__);
+    auto stub = connect_to_fileserver(fileserver_address); // stubs to each of the fileservers in NUM_FILESERVERS
+    if (!stub) {
+        std::cerr << "Failed to connect to fileserver " << fileserver_address << std::endl;
+        return;
+    }
+    
+    pfsfile::ReadFileRequest request; pfsfile::ReadFileResponse response;
+    
+    request.set_chunk_filename(chunk_filename);
+    request.set_chunk_number(chunk_number);
+    request.set_start_byte(start_byte);
+    request.set_end_byte(end_byte);
+    request.set_num_bytes(num_bytes);
+    request.set_offset(offset);
+
+    grpc::ClientContext context;
+
+    grpc::Status status = stub->ReadFile(&context, request, &response);
+    if (status.ok()) {
+        buf = response.content();
+        printf("Write file RPC succeeded: %s\n", response.message().c_str());
+    } else {
+        fprintf(stderr, "Write file RPC failed: %s\n", status.error_message().c_str());
+    }
+}

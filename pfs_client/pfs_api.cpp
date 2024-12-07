@@ -138,14 +138,29 @@ int pfs_read(int fd, void *buf, size_t num_bytes, off_t offset) {
     if (read_instructions.second == "FAIL") {
         return -1;
     }
-    // received instructions
-    for(struct Chunk chunk: read_instructions.first){
-        std::cout << "Instructed to read chunk number " << chunk.chunk_number << " from File Server " << chunk.server_number << ". Start from " << chunk.start_byte << " till " << chunk.end_byte << std::endl;
-    }
     
+    std::string filename = read_instructions.second;
+    std::vector<std::string> server_addresses = get_server_addresses();
 
-    // FOR instruction in instructions: fileserver_api_read();
-
+    std::string total_content = "";
+    for(struct Chunk &chunk: read_instructions.first){
+        std::string cur_content = "";
+        std::string chunk_filename = std::to_string(chunk.server_number) + "_" + filename + "_" + std::to_string(chunk.chunk_number);
+        std::cout << "Instructed to read from file called " << chunk_filename << " in File Server " << chunk.server_number << ". Start from " << chunk.start_byte << " till " << chunk.end_byte << std::endl;
+        
+        std::string fileserver_address = server_addresses[chunk.server_number + 1]; // +1 since 0 is metaserver
+        fileserver_api_read(fileserver_address, 
+                                cur_content, 
+                                chunk_filename, 
+                                chunk.chunk_number, 
+                                num_bytes, 
+                                chunk.start_byte, 
+                                chunk.end_byte,
+                                offset
+        );
+        total_content += cur_content;
+    }
+    std::memcpy(buf, total_content.c_str(), total_content.size());
     return 0;
 }
 

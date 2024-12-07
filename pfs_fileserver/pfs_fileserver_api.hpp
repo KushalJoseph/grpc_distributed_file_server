@@ -17,3 +17,13 @@ void fileserver_api_write(std::string fileserver_address,
                             int end_byte, 
                             int offset                            
 );
+
+void fileserver_api_read(std::string fileserver_address, 
+                            std::string &buf, 
+                            std::string chunk_filename, 
+                            int chunk_number, 
+                            int num_bytes, 
+                            int start_byte, 
+                            int end_byte, 
+                            int offset                            
+);

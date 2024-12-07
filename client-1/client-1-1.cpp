@@ -19,9 +19,9 @@ int main(int argc, char *argv[]) {
     // Open a file
     std::string input_filename(argv[1]);
     int input_fd = open(input_filename.c_str(), O_RDONLY);
-    char *buf = (char *)malloc(8 * 1024);
-    ssize_t nread = pread(input_fd, (void *)buf, 1024, 0);
-    if (nread != 1024) {
+    char *buf = (char *)malloc(20 * 1024);
+    ssize_t nread = pread(input_fd, (void *)buf, 1024 * 20, 0);
+    if (nread != 1024 * 20) {
         fprintf(stderr, "pread() error.\n");
         return -1;
     }
@@ -36,7 +36,7 @@ int main(int argc, char *argv[]) {
 
     // Create a PFS file
     int ret;
-    ret = pfs_create("pfs_file1", 2); // stripe_width
+    ret = pfs_create("pfs_file1", 3); // stripe_width
     if (ret == -1) {
         fprintf(stderr, "Unable to create a PFS file.\n");
         return -1;
@@ -68,27 +68,43 @@ int main(int argc, char *argv[]) {
         printf("%s:%s: Wrote %d bytes to the PFS file.\n", __FILE__, __func__, ret);
 
     // every request's buffer is fresh
-    ret = pfs_write(pfs_fd, (void *)buf, 1000, 1000);
+    // ret = pfs_write(pfs_fd, (void *)buf, 1000, 1024);
+    // if (ret == -1) {
+    //     fprintf(stderr, "Write error to PFS file.\n");
+    //     return -1;
+    // } else
+    //     printf("%s:%s: Wrote %d bytes to the PFS file.\n", __FILE__, __func__, ret);
+
+    char *read_content = (char*) malloc(40);
+    ret = pfs_read(pfs_fd, (void *)read_content, 40, 0);
     if (ret == -1) {
-        fprintf(stderr, "Write error to PFS file.\n");
+        fprintf(stderr, "Read error to PFS file.\n");
         return -1;
     } else
-        printf("%s:%s: Wrote %d bytes to the PFS file.\n", __FILE__, __func__, ret);
+        printf("%s:%s: Read %d bytes from the PFS file.\n", __FILE__, __func__, ret);
 
+    std::cout << read_content << std::endl << std::endl;
 
-    // ret = pfs_read(pfs_fd, (void *)buf, 1000, 1000);
+    // char *r2 = (char*) malloc(40);
+    // ret = pfs_read(pfs_fd, (void *)r2, 40, 1000);
     // if (ret == -1) {
     //     fprintf(stderr, "Read error to PFS file.\n");
     //     return -1;
     // } else
     //     printf("%s:%s: Read %d bytes from the PFS file.\n", __FILE__, __func__, ret);
 
-    // ret = pfs_read(pfs_fd, (void *)buf, 2000, 0);
+    // std::cout << "FINAL Read1: " << std::endl;
+    // std::cout << r2 << std::endl << std::endl;
+
+    // ret = pfs_read(pfs_fd, (void *)buf, 2000, 2000);
     // if (ret == -1) {
     //     fprintf(stderr, "Read error to PFS file.\n");
     //     return -1;
     // } else
     //     printf("%s:%s: Read %d bytes from the PFS file.\n", __FILE__, __func__, ret);
+
+    // std::cout << "Read2: " << std::endl;
+    // std::cout << buf << std::endl << std::endl;
 
     // ret = pfs_read(pfs_fd, (void *)buf, 10000, 1000);
     // if (ret == -1) {
