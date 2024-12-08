@@ -88,6 +88,16 @@ int verify_all_servers_online() {
     return 0;
 }
 
+std::string extract_name(std::string filename) {
+    size_t dot_pos = filename.find('.');
+    // If no dot is found, return the entire filename
+    if (dot_pos == std::string::npos) {
+        return filename;
+    }
+    // Otherwise, return the substring up to the dot
+    return filename.substr(0, dot_pos);
+}
+
 int pfs_initialize() {
     if(verify_all_servers_online() == -1){
         std::cerr << "Servers not online" << std::endl;
@@ -139,7 +149,7 @@ int pfs_read(int fd, void *buf, size_t num_bytes, off_t offset) {
         return -1;
     }
     
-    std::string filename = read_instructions.second;
+    std::string filename = extract_name(read_instructions.second);
     std::vector<std::string> server_addresses = get_server_addresses();
 
     std::string total_content = "";
@@ -177,7 +187,7 @@ int pfs_write(int fd, const void *buf, size_t num_bytes, off_t offset) {
         return -1;
     }
     
-    std::string filename = instructions.second;
+    std::string filename = extract_name(instructions.second);
     std::vector<std::string> server_addresses = get_server_addresses();
     for(struct Chunk &chunk: instructions.first){
         std::string chunk_filename = std::to_string(chunk.server_number) + "_" + filename + "_" + std::to_string(chunk.chunk_number);
@@ -199,18 +209,30 @@ int pfs_write(int fd, const void *buf, size_t num_bytes, off_t offset) {
 }
 
 int pfs_close(int fd) {
-    metaserver_api_close(fd);
-    return 0;
+    return metaserver_api_close(fd);
 }
 
 int pfs_delete(const char *filename) {
+    int m = metaserver_api_delete(filename);
+    if (m == -1) {
+        std::cerr << "Failed to delete file" << std::endl;
+        return -1;
+    }
 
+    std::vector<std::string> server_addresses = get_server_addresses();
+    for (size_t i = 1; i < NUM_FILE_SERVERS + 1; i++) {
+        std::string filename_string = extract_name(filename);
+        int f = fileserver_api_delete(filename_string, server_addresses[i], i - 1);
+        if (f == -1) {
+            std::cerr << "Failed to delete some file chunks " << std::endl;
+            return -1;
+        }
+    }
     return 0;
 }
 
 int pfs_fstat(int fd, struct pfs_metadata *meta_data) {
-
-    return 0;
+    return metaserver_api_fstat(fd, meta_data);
 }
 
 int pfs_execstat(struct pfs_execstat *execstat_data) {

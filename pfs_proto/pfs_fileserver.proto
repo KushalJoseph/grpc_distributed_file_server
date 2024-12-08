@@ -9,6 +9,7 @@ service PFSFileServer {
     rpc Initialize (InitRequest) returns (InitResponse) {}
     rpc WriteFile (WriteFileRequest) returns (WriteFileResponse) {}
     rpc ReadFile (ReadFileRequest) returns (ReadFileResponse) {}
+    rpc DeleteFile (DeleteFileRequest) returns (DeleteFileResponse) {}
 }
 
 message PingRequest {
@@ -50,4 +51,13 @@ message ReadFileResponse {
     string content = 1;
     string message = 2;
     int32 bytes_read = 3;
+}
+
+message DeleteFileRequest {
+    string filename = 1;
+    int32 fileserver_number = 2;
+}
+message DeleteFileResponse {
+    string message = 1;
+    int32 status_code = 2;
 }

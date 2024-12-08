@@ -14,6 +14,10 @@ int metaserver_api_open(const char *filename, int mode);
 
 int metaserver_api_close(int mode);
 
+int metaserver_api_fstat(int fd, struct pfs_metadata *meta_data);
+
+int metaserver_api_delete(const char *filename);
+
 /* <instructions, filename */
 std::pair<std::vector<struct Chunk>, std::string> metaserver_api_write(int fd, const void *buf, size_t num_bytes, off_t offset);
 

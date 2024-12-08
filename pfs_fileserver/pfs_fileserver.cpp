@@ -10,6 +10,8 @@
 #include <cstdio>
 #include <iostream>
 #include <cassert>
+#include <filesystem>
+#include <regex>
 
 using grpc::Server;
 using grpc::ServerBuilder;
@@ -161,6 +163,37 @@ public:
         reply->set_content(buf);
         reply->set_message(msgToSend);
         reply->set_bytes_read(-1); // write code
+        return Status::OK;
+    }
+
+    Status DeleteFile(ServerContext* context, const DeleteFileRequest* request, DeleteFileResponse* reply) override {
+        printf("%s: Received DeleteFile RPC call.\n", __func__);
+
+        std::string filename = request->filename();
+        int fileserver_number = request->fileserver_number();
+
+        try {
+            std::string base_path = "./files";
+            // Construct the pattern for matching files
+            std::string pattern = std::to_string(fileserver_number) + "_" + filename + "_" + ".*";
+            std::regex file_regex(pattern);
+
+            // Iterate through files in the given directory
+            for (const auto& entry : std::filesystem::directory_iterator(base_path)) {
+                const std::string file_path = entry.path().string();
+                const std::string file_name = entry.path().filename().string();
+                // Check if the file matches the pattern
+                if (std::regex_match(file_name, file_regex)) {
+                    std::filesystem::remove(entry.path()); // Delete the file
+                }
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "Error: " << e.what() << std::endl;
+        }
+
+        std::string msgToSend = "Deleted " + filename;
+        reply->set_message(msgToSend);
+        reply->set_status_code(0);
         return Status::OK;
     }
 };

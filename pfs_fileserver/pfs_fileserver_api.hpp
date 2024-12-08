@@ -27,3 +27,5 @@ void fileserver_api_read(std::string fileserver_address,
                             int end_byte, 
                             int offset                            
 );
+
+int fileserver_api_delete(std::string filename, std::string server_address, int fileserver_number);

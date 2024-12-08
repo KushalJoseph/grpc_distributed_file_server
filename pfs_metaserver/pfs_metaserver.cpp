@@ -20,13 +20,28 @@ const int MODE_WRITE = 2;
 
 class PFSMetadataServerImpl final : public PFSMetadataServer::Service {
 private:
-    std::unordered_map<std::string, struct pfs_metadata> files;             // filename: Metadata
+    std::unordered_map<std::string, struct pfs_metadata> files;      // filename: Metadata
 
     std::unordered_map<int, std::pair<std::string, int>> descriptor; // descriptor : <filename, mode>
     std::unordered_map<std::string, int> fileNameToDescriptor;       // filename: descriptor
 
     int next_fd = 3;
     std::set<int> used_fds;
+
+    template <typename ReplyType>
+    grpc::Status error(const std::string& msg, ReplyType* reply) {
+        std::cerr << msg << std::endl;
+        reply->set_message(msg);
+        reply->set_status_code(1);
+        return Status(grpc::StatusCode::INVALID_ARGUMENT, msg);
+    }
+
+    template <typename ReplyType>
+    grpc::Status success(const std::string& msg, ReplyType* reply) {
+        reply->set_message(msg);
+        reply->set_status_code(0);  
+        return Status::OK;
+    }
 
 public:
     Status Ping(ServerContext* context, const PingRequest* request, PingResponse* reply) override {
@@ -36,7 +51,7 @@ public:
     }
 
     Status Initialize(ServerContext* context, const InitRequest* request, InitResponse* reply) override {
-        reply->set_message("Connection successful! Metadata server is active.");
+        reply->set_message("Initialize successful!");
         printf("%s: Received Initialize RPC call.\n", __func__);
         return Status::OK;
     }
@@ -44,22 +59,11 @@ public:
     Status CreateFile(ServerContext* context, const pfsmeta::CreateFileRequest* request, pfsmeta::CreateFileResponse* reply) override {        
         std::string filename = request->filename();
         int stripe_width = request->stripe_width();
-        if(stripe_width > NUM_FILE_SERVERS) {
-            std::string msg = "Stripe width cannot exceed the number of file servers!";
-            std::cerr << msg << std::endl;
-            reply->set_message(msg);
-            reply->set_status_code(1);
-            return Status(grpc::StatusCode::INVALID_ARGUMENT, msg);
-        }
 
-        if (files.find(filename) != files.end()) {
-            std::string msg = "Cannot create file. File already exists!";
-            std::cerr << msg << std::endl;
-            reply->set_message(msg);
-            reply->set_status_code(1);
-            return Status(grpc::StatusCode::INVALID_ARGUMENT, msg);
-        }
-
+        if(stripe_width > NUM_FILE_SERVERS) return error("Stripe width cannot exceed the number of file servers!", reply);
+        
+        if (files.find(filename) != files.end()) return error("Cannot create file. File already exists!", reply);
+            
         struct pfs_metadata file_metadata;
         struct pfs_filerecipe recipe;
         recipe.stripe_width = stripe_width;
@@ -72,58 +76,84 @@ public:
 
         // creation, updation time
         files[filename] = file_metadata;
-
-        std::string replyMsg = "File " + filename + " created successfully.\n" + (files[filename].to_string());
-        reply->set_message(replyMsg);
-        reply->set_status_code(0);  
-        return Status::OK;
+        return success("File " + filename + " created successfully.\n" + (files[filename].to_string()), reply);
     }
 
     Status OpenFile(ServerContext* context, const OpenFileRequest* request, OpenFileResponse* reply) override {
+        printf("%s: Received Open RPC call to read.\n", __func__);
         std::string filename = request->filename();
 
-        if(files.find(filename) == files.end()) {
-            std::string msg = "File does not exist!";
-            std::cerr << msg << std::endl;
-            reply->set_message(msg);
-            reply->set_status_code(1);
-            return Status(grpc::StatusCode::INVALID_ARGUMENT, msg);
-        }
+        if(files.find(filename) == files.end()) return error("File does not exist!", reply);
         if(fileNameToDescriptor.find(filename) != fileNameToDescriptor.end()){
             int fd = fileNameToDescriptor[filename];
-            if(descriptor[fd].second == MODE_WRITE) {
-                std::string msg = "File is being written to ";
-                std::cerr << msg << std::endl;
-                reply->set_message(msg);
-                reply->set_status_code(0);
-                return Status(grpc::StatusCode::INVALID_ARGUMENT, msg);
-            }
+            if(descriptor[fd].second == MODE_WRITE) return error("File is being written to!", reply);
         }
         
         int mode = request->mode();
         if (mode == MODE_READ) {
             int fd = next_fd++;
             used_fds.insert(fd);
-
-            reply->set_message("File opened for you to read.");
-            reply->set_file_descriptor(fd);
-            printf("%s: Received Open RPC call to read.\n", __func__);
-
             descriptor[fd] = {filename, MODE_READ};
             fileNameToDescriptor[filename] = fd;
-            return Status::OK;
+            reply->set_file_descriptor(fd);
+            return success("File opened for you to read.", reply);
         } else if (mode == MODE_WRITE) {
             int fd = next_fd++;
             used_fds.insert(fd);
-
-            reply->set_message("File opened for you to write.");
-            reply->set_file_descriptor(fd);
-            printf("%s: Received Open RPC call to write.\n", __func__);
-
             descriptor[fd] = {filename, MODE_WRITE};
             fileNameToDescriptor[filename] = fd;
-            return Status::OK;
+            reply->set_file_descriptor(fd);
+            return success("File opened for you to write.", reply);
         }
+    }
+
+    Status FileMetadata(ServerContext* context, const FileMetadataRequest* request, FileMetadataResponse* reply) override {
+        printf("%s: Received File Metadata RPC call to read.\n", __func__);
+        int fd = request->file_descriptor();
+        if (descriptor.find(fd) == descriptor.end()) return error("File is not open", reply);
+        std::string filename = descriptor[fd].first;
+        if (files.find(filename) == files.end()) return error("Something went wrong, couldn't find file", reply);
+        
+        struct pfs_metadata meta_data = files[filename];
+        PFSMetadata* pfs_meta = reply->mutable_meta_data();
+        pfs_meta->set_filename(meta_data.filename);
+        pfs_meta->set_file_size(meta_data.file_size);
+        // pfs_meta->set_ctime(metadata.ctime);
+        // pfs_meta->set_mtime(metadata.mtime);
+        PFSFileRecipe* file_recipe = pfs_meta->mutable_recipe();
+        file_recipe->set_stripe_width(meta_data.recipe.stripe_width);
+
+        // Convert chunks from pfs_filerecipe to ProtoChunk
+        for (const Chunk& chunk : meta_data.recipe.chunks) {
+            ProtoChunk* proto_chunk = file_recipe->add_chunks();
+            proto_chunk->set_chunk_number(chunk.chunk_number);
+            proto_chunk->set_server_number(chunk.server_number);
+            proto_chunk->set_start_byte(chunk.start_byte);
+            proto_chunk->set_end_byte(chunk.end_byte);
+        }
+
+        return success("Sent File Metadata", reply);
+    }
+
+    Status DeleteFile(ServerContext* context, const DeleteFileRequest* request, DeleteFileResponse* reply) override {
+        printf("%s: Received Delete File RPC call to read.\n", __func__);
+        std::string filename = request->filename();
+
+        if (files.find(filename) == files.end()) return error("Something went wrong, couldn't find file", reply);
+        
+        // remove file, fds from maps
+        if (fileNameToDescriptor.find(filename) != fileNameToDescriptor.end()) {
+            return error("File is still open. Cannot Delete", reply);
+        }
+        fileNameToDescriptor.erase(filename);
+        files.erase(filename);
+
+        std::cout << "Current Keys: " << std::endl;
+        for (auto it: files) {
+            std::cout << it.first << std::endl;
+        }
+
+        return success("File Deleted", reply);
     }
 
     bool checkIfFileIsOpen(int fd) {
@@ -131,24 +161,16 @@ public:
     }
 
     Status CloseFile(ServerContext* context, const pfsmeta::CloseFileRequest* request, pfsmeta::CloseFileResponse* reply) override {        
+        printf("%s: Received File Metadata RPC call to close file.\n", __func__);
         int fd = request->file_descriptor();
-        if (checkIfFileIsOpen(fd) == false) {
-            std::string msg = "File may already be closed!";
-            std::cerr << msg << std::endl;
-            reply->set_message(msg);
-            reply->set_status_code(0);
-            return Status::OK;
-        }
+        if (checkIfFileIsOpen(fd) == false) return success("File may already be closed!", reply);
         std::string filename = descriptor[fd].first;
 
         // remove all records of the file being open, i.e, erase from the maps.
         fileNameToDescriptor.erase(filename);
         descriptor.erase(fd);
 
-        std::string replyMsg = "File " + filename + " closed successfully.\n";
-        reply->set_message(replyMsg);
-        reply->set_status_code(0);  
-        return Status::OK;
+        return success("File " + filename + " closed successfully.\n", reply);
     }
 
 
@@ -160,29 +182,14 @@ public:
 
         std::cout << "\nrequested to write: " << num_bytes << " from " << offset << std::endl << std::endl;
         
-        if (checkIfFileIsOpen(fd) == false) {
-            std::string msg = "File is not open!";
-            std::cerr << msg << std::endl;
-            reply->set_message(msg);
-            return Status(grpc::StatusCode::INVALID_ARGUMENT, msg);
-        }
+        if (checkIfFileIsOpen(fd) == false) return error("File doesn't exist or is not open!", reply);
 
         std::string filename = descriptor[fd].first;
-        if (files.find(filename) == files.end()) {
-            std::string msg = "File does not exist or was already deleted!";
-            std::cerr << msg << std::endl;
-            reply->set_message(msg);
-            return Status(grpc::StatusCode::INVALID_ARGUMENT, msg);
-        }
+        if (files.find(filename) == files.end()) return error("File does not exist or was already deleted!", reply);
 
         struct pfs_metadata &file_metadata = files[filename];
         int cur_file_size = file_metadata.file_size;
-        if (offset > cur_file_size) {
-            std::string msg = "Requested Offset " + std::to_string(offset) + ", cannot be greater than current file size, " + std::to_string(cur_file_size);
-            std::cerr << msg << std::endl;
-            reply->set_message(msg);
-            return Status(grpc::StatusCode::INVALID_ARGUMENT, msg);
-        }
+        if (offset > cur_file_size) return error("Requested Offset " + std::to_string(offset) + ", cannot be greater than current file size, " + std::to_string(cur_file_size), reply);
 
         std::vector<struct Chunk> &chunks = file_metadata.recipe.chunks;
         int start_chunk = offset / 1024; 
@@ -218,9 +225,6 @@ public:
         }    
 
         std::cout << "\nWrite Confirmation: \n" << filename << "\n" << files[filename].to_string() << std::endl;
-
-        std::string replyMsg = "Done";
-        reply->set_message(replyMsg);
         reply->set_filename(filename);
         for (const struct Chunk &instr: write_instructions) {
             WriteInstruction* write_instruction = reply->add_instructions();
@@ -229,7 +233,7 @@ public:
             write_instruction->set_start_byte(instr.start_byte);
             write_instruction->set_end_byte(instr.end_byte);
         }
-        return Status::OK;
+        return success("Done", reply);
     }
 
     Status ReadFile(ServerContext* context, const pfsmeta::ReadFileRequest* request, pfsmeta::ReadFileResponse* reply) override {        
@@ -240,20 +244,10 @@ public:
 
         std::cout << "\nrequested to read: " << num_bytes << " from " << offset << std::endl << std::endl;
         
-        if (checkIfFileIsOpen(fd) == false) {
-            std::string msg = "File is not open!";
-            std::cerr << msg << std::endl;
-            reply->set_message(msg);
-            return Status(grpc::StatusCode::INVALID_ARGUMENT, msg);
-        }
+        if (checkIfFileIsOpen(fd) == false) return error("File doesn't exist or is not open!", reply);
 
         std::string filename = descriptor[fd].first;
-        if (files.find(filename) == files.end()) {
-            std::string msg = "File does not exist or was already deleted!";
-            std::cerr << msg << std::endl;
-            reply->set_message(msg);
-            return Status(grpc::StatusCode::INVALID_ARGUMENT, msg);
-        }
+        if (files.find(filename) == files.end()) return error("File does not exist or was already deleted!", reply);
 
         struct pfs_metadata &file_metadata = files[filename];
         std::vector<struct Chunk> &chunks = file_metadata.recipe.chunks;
@@ -280,8 +274,6 @@ public:
             read_instructions.push_back(chunk_for_instruction);
         }    
 
-        std::string replyMsg = "Done";
-        reply->set_message(replyMsg);
         reply->set_filename(filename); 
         for (const struct Chunk &instr: read_instructions) {
             ReadInstruction* read_instruction = reply->add_instructions();
@@ -290,7 +282,7 @@ public:
             read_instruction->set_start_byte(instr.start_byte);
             read_instruction->set_end_byte(instr.end_byte);
         }
-        return Status::OK;
+        return success("Done", reply);
     }
 };
 

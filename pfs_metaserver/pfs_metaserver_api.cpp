@@ -1,5 +1,6 @@
 #include "pfs_metaserver_api.hpp"
 #include "pfs_proto/pfs_metaserver.grpc.pb.h"
+#include "pfs_proto/pfs_metaserver.pb.h"
 #include "pfs_client/pfs_api.hpp"
 #include <grpcpp/grpcpp.h>
 
@@ -112,8 +113,8 @@ int metaserver_api_close(int file_descriptor) {
         return 0;
     } else {
         fprintf(stderr, "CreateFile RPC failed: %s\n", status.error_message().c_str());
+        return -1;
     }
-    return -1;
 }
 
 std::pair<std::vector<struct Chunk>, std::string> metaserver_api_write(int fd, const void *buf, size_t num_bytes, off_t offset) {
@@ -195,5 +196,78 @@ std::pair<std::vector<struct Chunk>, std::string> metaserver_api_read(int fd, co
     }
     return {{}, "FAIL"};
 }
+
+int metaserver_api_fstat(int fd, struct pfs_metadata *meta_data) {
+    printf("%s: called to fetch metadata from file.\n", __func__);
+
+    auto stub = connect_to_metaserver();
+    if (!stub) {
+        std::cout << "Failed to connect to metaserver" << std::endl;
+        return -1;
+    }
+
+    pfsmeta::FileMetadataRequest request; pfsmeta::FileMetadataResponse response;
+    request.set_file_descriptor(fd);
+    grpc::ClientContext context;
+
+    grpc::Status status = stub->FileMetadata(&context, request, &response);
+    if (status.ok()) {
+        printf("File Metadata RPC succeeded: %s\n", response.message().c_str());
+
+        const pfsmeta::PFSMetadata& received_meta_data = response.meta_data();
+
+        if (!meta_data) meta_data = new pfs_metadata;
+        strncpy(meta_data->filename, received_meta_data.filename().c_str(), sizeof(meta_data->filename) - 1);
+        meta_data->filename[sizeof(meta_data->filename) - 1] = '\0'; // Ensure null-termination
+        meta_data->file_size = received_meta_data.file_size();
+        // meta_data->ctime = received_meta_data.ctime();
+        // meta_data->mtime = received_meta_data.mtime();
+
+        const pfsmeta::PFSFileRecipe& recipe = received_meta_data.recipe();
+        meta_data->recipe.stripe_width = recipe.stripe_width();
+
+        // Populate chunks
+        meta_data->recipe.chunks.clear(); // Clear any existing chunks in case of re-population
+        for (const pfsmeta::ProtoChunk& proto_chunk : recipe.chunks()) {
+            Chunk chunk;
+            chunk.chunk_number = proto_chunk.chunk_number();
+            chunk.server_number = proto_chunk.server_number();
+            chunk.start_byte = proto_chunk.start_byte();
+            chunk.end_byte = proto_chunk.end_byte();
+
+            // Add the chunk to the recipe's chunks vector
+            meta_data->recipe.chunks.push_back(chunk);
+        }
+        return 0;
+    } else {
+        fprintf(stderr, "File Metadata RPC failed: %s\n", status.error_message().c_str());
+        return -1;
+    }
+}
+
+int metaserver_api_delete(const char *filename) {
+    printf("%s: called to delete file.\n", __func__);
+
+    auto stub = connect_to_metaserver();
+    if (!stub) {
+        std::cout << "Failed to connect to metaserver" << std::endl;
+        return -1;
+    }
+
+    pfsmeta::DeleteFileRequest request; pfsmeta::DeleteFileResponse response;
+    request.set_filename(filename);
+    grpc::ClientContext context;
+
+    grpc::Status status = stub->DeleteFile(&context, request, &response);
+    if (status.ok()) {
+        printf("Delete File RPC succeeded: %s\n", response.message().c_str());
+        return 0;
+    } else {
+        fprintf(stderr, "File Metadata RPC failed: %s\n", status.error_message().c_str());
+        return -1;
+    }
+}
+
+
 
 

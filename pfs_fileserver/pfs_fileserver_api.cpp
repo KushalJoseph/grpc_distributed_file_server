@@ -107,3 +107,27 @@ void fileserver_api_read(std::string fileserver_address,
         fprintf(stderr, "Write file RPC failed: %s\n", status.error_message().c_str());
     }
 }
+
+int fileserver_api_delete(std::string filename, std::string fileserver_address, int fileserver_number) {
+    printf("%s: called.\n", __func__);
+    auto stub = connect_to_fileserver(fileserver_address); 
+    if (!stub) {
+        std::cerr << "Failed to connect to fileserver " << fileserver_address << std::endl;
+        return -1;
+    }
+    
+    pfsfile::DeleteFileRequest request; pfsfile::DeleteFileResponse response;
+    request.set_filename(filename);
+    request.set_fileserver_number(fileserver_number);
+    grpc::ClientContext context;
+
+    grpc::Status status = stub->DeleteFile(&context, request, &response);
+    if (status.ok()) {
+        printf("Delete file RPC succeeded: %s\n", response.message().c_str());
+        return 0;
+    } else {
+        fprintf(stderr, "Delete file RPC failed: %s\n", status.error_message().c_str());
+        return -1;
+    }
+}
+
