@@ -93,3 +93,11 @@ client2 requests read 60-80. Give. Note [60-]
 
 
 NOTE: DONT CREATE STUB FOR EVERY REQUEST! KEEP IT GLOBAL!
+
+
+
+
+If the range is free for given operation:
+    Hand out range to client. Client continues. Server sends out Read/Write instructions.
+If the range is not free:
+        

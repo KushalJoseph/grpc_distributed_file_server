@@ -14,6 +14,7 @@ service PFSMetadataServer {
     rpc ReadFile (ReadFileRequest) returns (ReadFileResponse) {}
     rpc FileMetadata (FileMetadataRequest) returns (FileMetadataResponse) {}
     rpc DeleteFile (DeleteFileRequest) returns (DeleteFileResponse) {}
+    rpc TokenStream(stream TokenRequest) returns (stream ServerNotification) {};
 }
 
 message PingRequest {
@@ -26,12 +27,14 @@ message InitRequest {
     int32 placeholder = 1;
 }
 message InitResponse {
-    string message = 1;
+    int32 client_id = 1;
+    string message = 2;
 }
 
 message CreateFileRequest {
     string filename = 1;   
     int32 stripe_width = 2;
+    int32 client_id = 3;
 }
 message CreateFileResponse {
     string message = 1;   
@@ -41,6 +44,7 @@ message CreateFileResponse {
 message OpenFileRequest {
     string filename = 1;
     int32 mode = 2;
+    int32 client_id = 3;
 }
 message OpenFileResponse {
     string message = 1;
@@ -50,6 +54,7 @@ message OpenFileResponse {
 
 message CloseFileRequest {
     int32 file_descriptor = 1;
+    int32 client_id = 2;
 }
 message CloseFileResponse {
     string message = 1;
@@ -61,6 +66,7 @@ message WriteToFileRequest {
     bytes buf = 2; 
     int32 num_bytes = 3;
     int32 offset = 4;
+    int32 client_id = 5;
 }
 message WriteInstruction {
     int32 chunk_number = 1;
@@ -81,6 +87,7 @@ message ReadFileRequest {
     bytes buf = 2; 
     int32 num_bytes = 3;
     int32 offset = 4;
+    int32 client_id = 5;
 }
 message ReadInstruction {
     int32 chunk_number = 1;
@@ -103,12 +110,10 @@ message ProtoChunk {
     int32 start_byte = 3;        
     int32 end_byte = 4;
 }
-
 message PFSFileRecipe {
     int32 stripe_width = 1;     
     repeated ProtoChunk chunks = 2;
 }
-
 message PFSMetadata {
     string filename = 1;        
     uint64 file_size = 2;       
@@ -116,9 +121,9 @@ message PFSMetadata {
     int64 mtime = 4;      
     PFSFileRecipe recipe = 5;
 }
-
 message FileMetadataRequest {
     int32 file_descriptor = 1;
+    int32 client_id = 2;
 }
 message FileMetadataResponse {
     PFSMetadata meta_data = 1;
@@ -129,10 +134,47 @@ message FileMetadataResponse {
 
 message DeleteFileRequest {
     string filename = 1;
+    int32 client_id = 2;
 }
 message DeleteFileResponse {
     string message = 1;
     int32 status_code = 2;
+}
+
+
+message ProtoFileToken {
+    int32 start_byte = 1;
+    int32 end_byte = 2;
+    int32 type = 3;
+    int32 client_id = 4;
+}
+message TokenRequest {
+    int32 file_descriptor = 1;
+    int32 start_byte = 2;
+    int32 end_byte = 3;
+    int32 type = 4; 
+    int32 client_id = 5;
+}
+message ServerNotification {
+    oneof notification {
+        TokenGrant grant = 1;
+        TokenRevocation revocation = 2;
+    }
+}
+message TokenGrant {
+    int32 start_byte = 1;
+    int32 end_byte = 2;
+    int32 type = 3;
+    int32 client_id = 4;
+    string filename = 5;
+    string message = 6;
+    int32 status_code = 7;
+}
+message TokenRevocation {
+    string filename = 1;
+    repeated ProtoFileToken new_tokens = 2;
+    string message = 4;
+    int32 status_code = 5;
 }
 
 

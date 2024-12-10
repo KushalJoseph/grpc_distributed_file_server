@@ -20,6 +20,47 @@
 #include "pfs_common/pfs_config.hpp"
 #include "pfs_common/pfs_common.hpp"
 
+struct FileToken {
+    int start_byte;
+    int end_byte;
+    int type; // 1 = READ, 2 = WRITE
+    int client_id;
+
+    std::string to_string() const {
+        std::ostringstream oss;
+        oss << "start_byte: " << start_byte << "; "
+            << "end_byte: " << end_byte << "; "
+            << "type: " << (type == 1 ? "READ" : (type == 2 ? "WRITE" : "UNKNOWN")) << "; "
+            << "client_id: " << client_id
+            << "\n";
+        return oss.str();
+    }
+
+    bool overlaps(const FileToken& other) const {
+        return (other.end_byte >= start_byte) && (end_byte >= other.start_byte);
+    }
+
+    std::vector<FileToken> subtract(const FileToken& other) const {
+        std::vector<FileToken> result;
+
+        if (start_byte <= other.start_byte) {
+            result.push_back({start_byte, other.start_byte - 1, type, client_id});
+        }
+        if (end_byte >= other.end_byte) {
+            result.push_back({other.end_byte + 1, end_byte, type, client_id});
+        }
+        return result;
+    }
+
+    bool operator<(const FileToken& other) const {
+        // Compare based on start_byte first, then end_byte, type, and client_id
+        if (start_byte != other.start_byte) return start_byte < other.start_byte;
+        if (end_byte != other.end_byte) return end_byte < other.end_byte;
+        if (type != other.type) return type < other.type;
+        return client_id < other.client_id;
+    }
+};
+
 // for every file, define std::vector<Chunk>
 struct Chunk {
     int chunk_number;

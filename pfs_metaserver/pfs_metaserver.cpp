@@ -12,6 +12,7 @@
 using grpc::Server;
 using grpc::ServerBuilder;
 using grpc::ServerContext;
+using grpc::ServerReaderWriter;
 using grpc::Status;
 using namespace pfsmeta;
 
@@ -20,12 +21,18 @@ const int MODE_WRITE = 2;
 
 class PFSMetadataServerImpl final : public PFSMetadataServer::Service {
 private:
-    std::unordered_map<std::string, struct pfs_metadata> files;      // filename: Metadata
+    std::unordered_map<std::string, struct pfs_metadata> files;                     // filename: Metadata
+    std::unordered_map<int, std::pair<std::string, int>> descriptor;                // descriptor : <filename, mode>
+    std::unordered_map<std::string, int> fileNameToDescriptor;                      // filename: descriptor
 
-    std::unordered_map<int, std::pair<std::string, int>> descriptor; // descriptor : <filename, mode>
-    std::unordered_map<std::string, int> fileNameToDescriptor;       // filename: descriptor
+    // UNDERSTAND THESE
+    // filename: [{token - connection to client who owns it}]
+    std::map<std::string, std::map<FileToken, ServerReaderWriter<pfsmeta::ServerNotification, pfsmeta::TokenRequest>*>> file_tokens_;
+    std::set<ServerReaderWriter<pfsmeta::ServerNotification, pfsmeta::TokenRequest>*> client_streams_;
+    std::mutex mutex_;
 
     int next_fd = 3;
+    int next_client_id = 1;
     std::set<int> used_fds;
 
     template <typename ReplyType>
@@ -45,20 +52,23 @@ private:
 
 public:
     Status Ping(ServerContext* context, const PingRequest* request, PingResponse* reply) override {
-        reply->set_message("Thanks for the Ping. I, the metaserver am alive!");
         printf("%s: Received ping RPC call.\n", __func__);
+        reply->set_message("Thanks for the Ping. I, the metaserver am alive!");
         return Status::OK;
     }
 
     Status Initialize(ServerContext* context, const InitRequest* request, InitResponse* reply) override {
-        reply->set_message("Initialize successful!");
         printf("%s: Received Initialize RPC call.\n", __func__);
+        reply->set_message("Initialize successful!");
+        reply->set_client_id(next_client_id);
+        next_client_id++;
         return Status::OK;
     }
 
     Status CreateFile(ServerContext* context, const pfsmeta::CreateFileRequest* request, pfsmeta::CreateFileResponse* reply) override {        
         std::string filename = request->filename();
         int stripe_width = request->stripe_width();
+        int client_id = request->client_id();
 
         if(stripe_width > NUM_FILE_SERVERS) return error("Stripe width cannot exceed the number of file servers!", reply);
         
@@ -76,19 +86,16 @@ public:
 
         // creation, updation time
         files[filename] = file_metadata;
-        return success("File " + filename + " created successfully.\n" + (files[filename].to_string()), reply);
+        return success("File " + filename + " created successfully.\n", reply);
     }
 
     Status OpenFile(ServerContext* context, const OpenFileRequest* request, OpenFileResponse* reply) override {
         printf("%s: Received Open RPC call to read.\n", __func__);
         std::string filename = request->filename();
-
         if(files.find(filename) == files.end()) return error("File does not exist!", reply);
-        if(fileNameToDescriptor.find(filename) != fileNameToDescriptor.end()){
-            int fd = fileNameToDescriptor[filename];
-            if(descriptor[fd].second == MODE_WRITE) return error("File is being written to!", reply);
-        }
         
+        int client_id = request->client_id();
+
         int mode = request->mode();
         if (mode == MODE_READ) {
             int fd = next_fd++;
@@ -104,6 +111,8 @@ public:
             fileNameToDescriptor[filename] = fd;
             reply->set_file_descriptor(fd);
             return success("File opened for you to write.", reply);
+        } else {
+            return error("Wrong Mode", reply);
         }
     }
 
@@ -114,6 +123,8 @@ public:
         std::string filename = descriptor[fd].first;
         if (files.find(filename) == files.end()) return error("Something went wrong, couldn't find file", reply);
         
+        int client_id = request->client_id();
+
         struct pfs_metadata meta_data = files[filename];
         PFSMetadata* pfs_meta = reply->mutable_meta_data();
         pfs_meta->set_filename(meta_data.filename);
@@ -138,38 +149,42 @@ public:
     Status DeleteFile(ServerContext* context, const DeleteFileRequest* request, DeleteFileResponse* reply) override {
         printf("%s: Received Delete File RPC call to read.\n", __func__);
         std::string filename = request->filename();
-
         if (files.find(filename) == files.end()) return error("Something went wrong, couldn't find file", reply);
         
+        int client_id = request->client_id();
+
+        if (fileNameToDescriptor.find(filename) != fileNameToDescriptor.end()) return error("File is still open. Cannot Delete", reply);
+        
         // remove file, fds from maps
-        if (fileNameToDescriptor.find(filename) != fileNameToDescriptor.end()) {
-            return error("File is still open. Cannot Delete", reply);
-        }
         fileNameToDescriptor.erase(filename);
         files.erase(filename);
 
-        std::cout << "Current Keys: " << std::endl;
-        for (auto it: files) {
-            std::cout << it.first << std::endl;
-        }
-
-        return success("File Deleted", reply);
-    }
-
-    bool checkIfFileIsOpen(int fd) {
-        return descriptor.find(fd) != descriptor.end();
+        return success("File records Deleted from Metaserver", reply);
     }
 
     Status CloseFile(ServerContext* context, const pfsmeta::CloseFileRequest* request, pfsmeta::CloseFileResponse* reply) override {        
         printf("%s: Received File Metadata RPC call to close file.\n", __func__);
         int fd = request->file_descriptor();
-        if (checkIfFileIsOpen(fd) == false) return success("File may already be closed!", reply);
+        if (descriptor.find(fd) == descriptor.end()) return success("File may already be closed!", reply);
         std::string filename = descriptor[fd].first;
 
         // remove all records of the file being open, i.e, erase from the maps.
         fileNameToDescriptor.erase(filename);
         descriptor.erase(fd);
 
+        // delete tokens held by client, since they are closing the file now
+
+        auto& ranges = file_tokens_[filename]; // map<FileToken, stream>
+        for (auto it = ranges.begin(); it != ranges.end(); ) {
+            struct FileToken existing_token = it->first;
+            auto* conflicting_stream = it->second;
+            if (existing_token.client_id == request->client_id()) {
+                std::cout << "Deleting this token from my record: " << existing_token.to_string();
+                it = ranges.erase(it);
+            } else {
+                ++it;
+            }
+        }
         return success("File " + filename + " closed successfully.\n", reply);
     }
 
@@ -179,10 +194,11 @@ public:
         std::string buf = request->buf();
         int num_bytes = request->num_bytes();
         int offset = request->offset();
+        int client_id = request->client_id();
 
-        std::cout << "\nrequested to write: " << num_bytes << " from " << offset << std::endl << std::endl;
+        std::cout << "\nClient " << client_id << " requested to write: " << num_bytes << " from " << offset << std::endl << std::endl;
         
-        if (checkIfFileIsOpen(fd) == false) return error("File doesn't exist or is not open!", reply);
+        if (descriptor.find(fd) == descriptor.end()) return error("File doesn't exist or is not open!", reply);
 
         std::string filename = descriptor[fd].first;
         if (files.find(filename) == files.end()) return error("File does not exist or was already deleted!", reply);
@@ -241,10 +257,11 @@ public:
         std::string buf = request->buf();
         int num_bytes = request->num_bytes();
         int offset = request->offset();
+        int client_id = request->client_id();
 
-        std::cout << "\nrequested to read: " << num_bytes << " from " << offset << std::endl << std::endl;
+        std::cout << "\nClient " << client_id << " requested to read: " << num_bytes << " from " << offset << std::endl << std::endl;
         
-        if (checkIfFileIsOpen(fd) == false) return error("File doesn't exist or is not open!", reply);
+        if (descriptor.find(fd) == descriptor.end()) return error("File doesn't exist or is not open!", reply);
 
         std::string filename = descriptor[fd].first;
         if (files.find(filename) == files.end()) return error("File does not exist or was already deleted!", reply);
@@ -283,6 +300,94 @@ public:
             read_instruction->set_end_byte(instr.end_byte);
         }
         return success("Done", reply);
+    }
+
+    Status TokenStream(ServerContext* context, ServerReaderWriter<ServerNotification, TokenRequest>* stream) override {
+        std::string client_id;
+        // Store the stream for this client
+        {
+            std::unique_lock<std::mutex> lock(mutex_);
+            client_streams_.insert(stream);
+        }
+
+        // Process incoming token requests
+        TokenRequest request;
+        while (stream->Read(&request)) {
+            int fd = request.file_descriptor();
+            if (descriptor.find(fd) == descriptor.end()) return Status(grpc::StatusCode::INVALID_ARGUMENT, "Please open the file first\n");
+
+            std::string filename = descriptor[fd].first;
+            handleTokenRequest(filename, request, stream);
+        }
+
+        // WHEN CLIENT FINISHES Remove the stream when the client disconnects
+        // {
+        //     std::unique_lock<std::mutex> lock(mutex_);
+        //     client_streams_.erase(stream);
+        // }
+        return Status::OK;
+    }
+
+    void handleTokenRequest(std::string filename, const TokenRequest& request, ServerReaderWriter<ServerNotification, TokenRequest>* stream) {
+        int start_byte = request.start_byte();
+        int end_byte = request.end_byte();
+        int type = request.type();
+        int client_id = request.client_id();
+        
+        FileToken requested_range{start_byte, end_byte, type, client_id};
+
+        std::unique_lock<std::mutex> lock(mutex_);
+
+        auto& ranges = file_tokens_[filename]; // map<FileToken, stream>
+        for (auto it = ranges.begin(); it != ranges.end(); ) {
+            struct FileToken existing_token = it->first;
+            auto* conflicting_stream = it->second;
+
+            std::cout << "Checking Ranges for Overlap: " << existing_token.start_byte << "-" << existing_token.end_byte << " VS " << start_byte << "-" << end_byte << std::endl;
+            if (existing_token.overlaps(requested_range)) {
+                std::cout << "They Overlap" << std::endl;
+                std::vector<FileToken> new_ranges = existing_token.subtract(requested_range);
+
+                std::cout << "Sending revocation to client " << existing_token.client_id << std::endl;
+                ServerNotification notification;
+                auto* revocation = notification.mutable_revocation();
+                revocation->set_filename(filename);
+
+                auto* new_token = revocation->add_new_tokens();
+                new_token->set_start_byte(existing_token.start_byte);
+                new_token->set_end_byte(existing_token.end_byte);
+                new_token->set_type(existing_token.type);
+                new_token->set_client_id(existing_token.client_id);
+
+                for (const auto& range : new_ranges) {
+                    auto* new_token = revocation->add_new_tokens();
+                    new_token->set_start_byte(range.start_byte);
+                    new_token->set_end_byte(range.end_byte);
+                    new_token->set_type(range.type);
+                    new_token->set_client_id(range.client_id);
+                }
+                conflicting_stream->Write(notification);
+                it = ranges.erase(it);
+            } else {
+                std::cout << "They don't overlap" << std::endl;
+                ++it;
+            }
+        }
+        ranges[requested_range] = stream;
+        sendGrant(stream, filename, requested_range, client_id, type);
+    }
+
+    void sendGrant(ServerReaderWriter<ServerNotification, TokenRequest>* stream,
+                   const std::string& filename, const FileToken& range, int client_id, int type) {
+        std::cout << "Granting to this client, i.e, " << client_id << std::endl;
+        ServerNotification notification;
+        auto* grant = notification.mutable_grant();
+        grant->set_start_byte(range.start_byte);
+        grant->set_end_byte(range.end_byte);
+        grant->set_client_id(client_id);
+        grant->set_type(type);
+        grant->set_filename(filename);
+        stream->Write(notification);
     }
 };
 

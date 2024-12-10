@@ -1,6 +1,6 @@
 .SUFFIXES:
 .PHONY: default clean
-default: client-1-1 client-1-2 client-1-3
+default: client-1-1 client-1-2 client-1-3 client-1-1x
 
 OBJS = ../pfs_common/pfs_common.o \
 		../pfs_proto/pfs_fileserver.pb.o ../pfs_proto/pfs_fileserver.grpc.pb.o \

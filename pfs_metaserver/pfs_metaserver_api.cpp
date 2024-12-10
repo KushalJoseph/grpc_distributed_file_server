@@ -4,6 +4,11 @@
 #include "pfs_client/pfs_api.hpp"
 #include <grpcpp/grpcpp.h>
 
+
+std::unordered_map<std::string, std::set<FileToken>> my_tokens;
+std::unordered_map<int, std::string> descriptor_to_file;
+int this_client_id;
+
 std::unique_ptr<pfsmeta::PFSMetadataServer::Stub> connect_to_metaserver() {
     // Step 0: Read the server's address and port from a file or configuration
     std::filesystem::path current_path = std::filesystem::current_path();
@@ -24,28 +29,107 @@ std::unique_ptr<pfsmeta::PFSMetadataServer::Stub> connect_to_metaserver() {
     return stub;
 }
 
-void metaserver_api_initialize() {
-    printf("%s: called.\n", __func__);
+void listenForNotifications(grpc::ClientReaderWriter<pfsmeta::TokenRequest, pfsmeta::ServerNotification>* stream) {
+    pfsmeta::ServerNotification notification;
+    while (stream->Read(&notification)) {
+        std::cout << "\n\nHave received a notification" << std::endl;
+        for (auto it: my_tokens) {
+            std::cout << "Tokens BEFORE for " << it.first << std::endl;
+            for (auto jt: it.second) {
+                std::cout << jt.start_byte << " " << jt.end_byte << " " << jt.type << " " << jt.client_id << std::endl;
+            }
+        }
+        // Process notifications (grants or revocations)
+        if (notification.has_grant()) {
+            const auto& grant = notification.grant();
+            std::cout << "Received token grant for filename " << grant.filename() << ": ["
+                      << grant.start_byte() << "-"
+                      << grant.end_byte() << "]\n";
+            FileToken granted_token = {grant.start_byte(), grant.end_byte(), grant.type(), grant.client_id()};
+
+            my_tokens[grant.filename()].insert(granted_token);
+        } else if (notification.has_revocation()) {
+            const auto& revocation = notification.revocation();
+            std::cout << "Received token revocation for filename " << revocation.filename() << "\n";
+            bool first = true;
+            for (const auto& range : revocation.new_tokens()) {
+                if (first) {
+                    first = false;
+                    FileToken revoked_token = {range.start_byte(), range.end_byte(), range.type(), this_client_id};
+                    std::cout << "Revoking " << revoked_token.start_byte << " " << revoked_token.end_byte << " " << revoked_token.type << " " << revoked_token.client_id << std::endl;
+                    
+                    if (my_tokens[revocation.filename()].find(revoked_token) == my_tokens[revocation.filename()].end()) {
+                        std::cout << "Could not find this token in the existing tokens" << std::endl; 
+                    } else {
+                        std::cout << "Found, now erasing" << std::endl;
+                    }
+                    my_tokens[revocation.filename()].erase(revoked_token);
+                } else {
+                    std::cout << "\nGranting Split: [" << range.start_byte() << "-" << range.end_byte() << "]\n";
+                    FileToken split_token = {range.start_byte(), range.end_byte(), range.type(), this_client_id};
+                    if (range.start_byte() <= range.end_byte()) {
+                        std::cout << "inserting " << split_token.to_string() << std::endl;
+                        my_tokens[revocation.filename()].insert(split_token);
+                    }   
+                }
+            }
+        }
+        for (auto it: my_tokens) {
+            std::cout << "\nTokens AFTER for " << it.first << std::endl;
+            for (auto jt: it.second) {
+                std::cout << "[" << jt.start_byte << "-" << jt.end_byte << "] " << jt.type << " " << jt.client_id << std::endl;
+            }
+        }
+        std::cout << std::endl;
+    }
+}
+
+std::unique_ptr<grpc::ClientReaderWriter<pfsmeta::TokenRequest, pfsmeta::ServerNotification>> stream;
+void Run(int client_id) {
     auto stub = connect_to_metaserver();
     if (!stub) {
         std::cout << "Failed to connect to metaserver" << std::endl;
         return;
+    }
+    grpc::ClientContext *context = new grpc::ClientContext();
+    stream = stub->TokenStream(context);
+    // Start a thread to listen for server notifications
+    std::thread listener([raw_stream = stream.get()]() { 
+        listenForNotifications(raw_stream); 
+    });
+
+    listener.detach();
+}
+
+int metaserver_api_initialize() {
+    printf("%s: called.\n", __func__);
+    auto stub = connect_to_metaserver();
+    if (!stub) {
+        std::cout << "Failed to connect to metaserver" << std::endl;
+        return -1;
     }
     
     pfsmeta::InitRequest request;
     pfsmeta::InitResponse response;
 
     grpc::ClientContext context;
+    
 
     grpc::Status status = stub->Initialize(&context, request, &response);
     if (status.ok()) {
         printf("Initialize RPC succeeded: %s\n", response.message().c_str());
+
+        this_client_id = response.client_id();
+        std::cout << "Received client id: " << this_client_id << std::endl;
+        Run(this_client_id);
+        return this_client_id;
     } else {
         fprintf(stderr, "Initialize RPC failed: %s\n", status.error_message().c_str());
+        return -1;
     }
 }
 
-void metaserver_api_create(const char *filename, int stripe_width) {
+void metaserver_api_create(const char *filename, int stripe_width, int client_id) {
     printf("%s: called to create file.\n", __func__);
 
     auto stub = connect_to_metaserver();
@@ -57,6 +141,7 @@ void metaserver_api_create(const char *filename, int stripe_width) {
     pfsmeta::CreateFileRequest request; pfsmeta::CreateFileResponse response;
     request.set_filename(filename);
     request.set_stripe_width(stripe_width);
+    request.set_client_id(client_id);
 
     grpc::ClientContext context;
 
@@ -68,7 +153,7 @@ void metaserver_api_create(const char *filename, int stripe_width) {
     }
 }
 
-int metaserver_api_open(const char *filename, int mode) {
+int metaserver_api_open(const char *filename, int mode, int client_id) {
     printf("%s: called to open file.\n", __func__);
 
     auto stub = connect_to_metaserver();
@@ -80,20 +165,23 @@ int metaserver_api_open(const char *filename, int mode) {
     pfsmeta::OpenFileRequest request; pfsmeta::OpenFileResponse response;
     request.set_filename(filename);
     request.set_mode(mode);
+    request.set_client_id(client_id);
 
     grpc::ClientContext context;
 
     grpc::Status status = stub->OpenFile(&context, request, &response);
     if (status.ok()) {
         printf("OpenFile RPC succeeded: %s\n", response.message().c_str());
-        return response.file_descriptor();
+        int received_fd = response.file_descriptor();
+        descriptor_to_file[received_fd] = filename;
+        return received_fd;
     } else {
         fprintf(stderr, "OpenFile RPC failed: %s\n", status.error_message().c_str());
     }
     return -1;
 }
 
-int metaserver_api_close(int file_descriptor) {
+int metaserver_api_close(int file_descriptor, int client_id) {
     printf("%s: called to close file.\n", __func__);
 
     auto stub = connect_to_metaserver();
@@ -104,6 +192,7 @@ int metaserver_api_close(int file_descriptor) {
 
     pfsmeta::CloseFileRequest request; pfsmeta::CloseFileResponse response;
     request.set_file_descriptor(file_descriptor);
+    request.set_client_id(client_id);
 
     grpc::ClientContext context;
 
@@ -117,7 +206,7 @@ int metaserver_api_close(int file_descriptor) {
     }
 }
 
-std::pair<std::vector<struct Chunk>, std::string> metaserver_api_write(int fd, const void *buf, size_t num_bytes, off_t offset) {
+std::pair<std::vector<struct Chunk>, std::string> metaserver_api_write(int fd, const void *buf, size_t num_bytes, off_t offset, int client_id) {
     printf("%s: called to write to file.\n", __func__);
 
     auto stub = connect_to_metaserver();
@@ -133,6 +222,7 @@ std::pair<std::vector<struct Chunk>, std::string> metaserver_api_write(int fd, c
     request.set_buf(bytes_string);
     request.set_num_bytes(num_bytes);
     request.set_offset(offset);
+    request.set_client_id(client_id);
 
     grpc::ClientContext context;
 
@@ -157,7 +247,7 @@ std::pair<std::vector<struct Chunk>, std::string> metaserver_api_write(int fd, c
     return {{}, "FAIL"};
 }
 
-std::pair<std::vector<struct Chunk>, std::string> metaserver_api_read(int fd, const void *buf, size_t num_bytes, off_t offset) {
+std::pair<std::vector<struct Chunk>, std::string> metaserver_api_read(int fd, const void *buf, size_t num_bytes, off_t offset, int client_id) {
     printf("%s: called to read from file.\n", __func__);
 
     auto stub = connect_to_metaserver();
@@ -173,6 +263,7 @@ std::pair<std::vector<struct Chunk>, std::string> metaserver_api_read(int fd, co
     request.set_buf(""); // empty buffer
     request.set_num_bytes(num_bytes);
     request.set_offset(offset);
+    request.set_client_id(client_id);
 
     grpc::ClientContext context;
 
@@ -197,7 +288,7 @@ std::pair<std::vector<struct Chunk>, std::string> metaserver_api_read(int fd, co
     return {{}, "FAIL"};
 }
 
-int metaserver_api_fstat(int fd, struct pfs_metadata *meta_data) {
+int metaserver_api_fstat(int fd, struct pfs_metadata *meta_data, int client_id) {
     printf("%s: called to fetch metadata from file.\n", __func__);
 
     auto stub = connect_to_metaserver();
@@ -208,6 +299,8 @@ int metaserver_api_fstat(int fd, struct pfs_metadata *meta_data) {
 
     pfsmeta::FileMetadataRequest request; pfsmeta::FileMetadataResponse response;
     request.set_file_descriptor(fd);
+    request.set_client_id(client_id);
+
     grpc::ClientContext context;
 
     grpc::Status status = stub->FileMetadata(&context, request, &response);
@@ -245,7 +338,7 @@ int metaserver_api_fstat(int fd, struct pfs_metadata *meta_data) {
     }
 }
 
-int metaserver_api_delete(const char *filename) {
+int metaserver_api_delete(const char *filename, int client_id) {
     printf("%s: called to delete file.\n", __func__);
 
     auto stub = connect_to_metaserver();
@@ -256,6 +349,8 @@ int metaserver_api_delete(const char *filename) {
 
     pfsmeta::DeleteFileRequest request; pfsmeta::DeleteFileResponse response;
     request.set_filename(filename);
+    request.set_client_id(client_id);
+
     grpc::ClientContext context;
 
     grpc::Status status = stub->DeleteFile(&context, request, &response);
@@ -267,6 +362,65 @@ int metaserver_api_delete(const char *filename) {
         return -1;
     }
 }
+
+void metaserver_api_request_token(int fd, int start_byte, int end_byte, int type, int client_id) {
+    printf("%s: called to request token.\n", __func__);
+
+    auto stub = connect_to_metaserver();
+    if (!stub) {
+        std::cout << "Failed to connect to metaserver" << std::endl;
+        return;
+    }
+
+    // grpc::ClientContext context;
+    pfsmeta::TokenRequest request;
+    request.set_file_descriptor(fd);
+    request.set_start_byte(start_byte);
+    request.set_end_byte(end_byte);
+    request.set_type(type);
+    request.set_client_id(client_id);
+
+    stream->Write(request);
+}
+
+bool metaserver_api_check_tokens(int fd, int start_byte, int end_byte, int type, int client_id) {
+    printf("%s: called to check token.\n", __func__);
+    if (descriptor_to_file.find(fd) == descriptor_to_file.end()) {
+        std::cerr << "Something went wrong!" << std::endl;
+        return false;
+    }
+    std::string filename = descriptor_to_file[fd];
+
+    if (my_tokens.find(filename) == my_tokens.end()) return false;
+
+    int current_start = start_byte;
+    std::cout << "Checking my tokens for " << filename << std::endl;
+    for (const auto& token : my_tokens[filename]) {
+        std::cout << "Covering with token " << token.to_string() << std::endl;
+        int token_start = token.start_byte;
+        int token_end = token.end_byte;
+        int token_type = token.type;
+
+        // Check if the token overlaps with the current uncovered range
+        if (token_start <= current_start && token_end >= current_start) {
+            // If type is read (1), any token can contribute
+            if (type == 1 && (token_type == 1 || token_type == 2)) {
+                current_start = token_end + 1;
+            }
+            // If type is write/read (2), only write/read tokens can contribute
+            else if (type == 2 && token_type == 2) {
+                current_start = token_end + 1;
+            }
+        }
+        // If the entire range is covered, return true
+        if (current_start >= end_byte) {
+            return true;
+        }
+    }
+    // If the range is not fully covered, return false
+    return false;
+}
+
 
 
 
