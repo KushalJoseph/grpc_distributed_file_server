@@ -6,7 +6,7 @@
 
 
 std::unordered_map<std::string, std::set<FileToken>> my_tokens;
-std::unordered_map<int, std::string> descriptor_to_file;
+std::unordered_map<int, std::string> descriptor_to_filename; // maps descriptor to filename
 int this_client_id;
 
 std::unique_ptr<pfsmeta::PFSMetadataServer::Stub> connect_to_metaserver() {
@@ -29,6 +29,15 @@ std::unique_ptr<pfsmeta::PFSMetadataServer::Stub> connect_to_metaserver() {
     return stub;
 }
 
+struct FileSync {
+    std::mutex mtx;
+    std::condition_variable cv;
+    bool token_ready = false;
+};
+
+// Map to manage synchronization primitives per filename
+std::map<std::pair<std::string, int>, FileSync> file_sync_map;
+
 void listenForNotifications(grpc::ClientReaderWriter<pfsmeta::TokenRequest, pfsmeta::ServerNotification>* stream) {
     pfsmeta::ServerNotification notification;
     while (stream->Read(&notification)) {
@@ -48,6 +57,14 @@ void listenForNotifications(grpc::ClientReaderWriter<pfsmeta::TokenRequest, pfsm
             FileToken granted_token = {grant.start_byte(), grant.end_byte(), grant.type(), grant.client_id()};
 
             my_tokens[grant.filename()].insert(granted_token);
+
+            auto& file_sync = file_sync_map[{grant.filename(), grant.type()}];
+            {
+                std::lock_guard<std::mutex> lock(file_sync.mtx);
+                file_sync.token_ready = true;
+            }
+            std::cout << "Received token, resuming" << std::endl;
+            file_sync.cv.notify_one();  
         } else if (notification.has_revocation()) {
             const auto& revocation = notification.revocation();
             std::cout << "Received token revocation for filename " << revocation.filename() << "\n";
@@ -129,13 +146,13 @@ int metaserver_api_initialize() {
     }
 }
 
-void metaserver_api_create(const char *filename, int stripe_width, int client_id) {
+int metaserver_api_create(const char *filename, int stripe_width, int client_id) {
     printf("%s: called to create file.\n", __func__);
 
     auto stub = connect_to_metaserver();
     if (!stub) {
         std::cout << "Failed to connect to metaserver" << std::endl;
-        return;
+        return -1;
     }
 
     pfsmeta::CreateFileRequest request; pfsmeta::CreateFileResponse response;
@@ -148,8 +165,10 @@ void metaserver_api_create(const char *filename, int stripe_width, int client_id
     grpc::Status status = stub->CreateFile(&context, request, &response);
     if (status.ok()) {
         printf("CreateFile RPC succeeded: %s\n", response.message().c_str());
+        return 0;
     } else {
         fprintf(stderr, "CreateFile RPC failed: %s\n", status.error_message().c_str());
+        return -1;
     }
 }
 
@@ -173,7 +192,7 @@ int metaserver_api_open(const char *filename, int mode, int client_id) {
     if (status.ok()) {
         printf("OpenFile RPC succeeded: %s\n", response.message().c_str());
         int received_fd = response.file_descriptor();
-        descriptor_to_file[received_fd] = filename;
+        descriptor_to_filename[received_fd] = filename;
         return received_fd;
     } else {
         fprintf(stderr, "OpenFile RPC failed: %s\n", status.error_message().c_str());
@@ -371,8 +390,7 @@ void metaserver_api_request_token(int fd, int start_byte, int end_byte, int type
         std::cout << "Failed to connect to metaserver" << std::endl;
         return;
     }
-
-    // grpc::ClientContext context;
+    
     pfsmeta::TokenRequest request;
     request.set_file_descriptor(fd);
     request.set_start_byte(start_byte);
@@ -381,15 +399,20 @@ void metaserver_api_request_token(int fd, int start_byte, int end_byte, int type
     request.set_client_id(client_id);
 
     stream->Write(request);
+
+    auto& file_sync = file_sync_map[{descriptor_to_filename[fd], type}];
+    std::unique_lock<std::mutex> lock(file_sync.mtx);
+    std::cout << "I have sent the request, now I'll block myself until token arrives" << std::endl;
+    file_sync.cv.wait(lock, [&file_sync] { return file_sync.token_ready; });  // Wait until token is ready
 }
 
 bool metaserver_api_check_tokens(int fd, int start_byte, int end_byte, int type, int client_id) {
     printf("%s: called to check token.\n", __func__);
-    if (descriptor_to_file.find(fd) == descriptor_to_file.end()) {
+    if (descriptor_to_filename.find(fd) == descriptor_to_filename.end()) {
         std::cerr << "Something went wrong!" << std::endl;
         return false;
     }
-    std::string filename = descriptor_to_file[fd];
+    std::string filename = descriptor_to_filename[fd];
 
     if (my_tokens.find(filename) == my_tokens.end()) return false;
 

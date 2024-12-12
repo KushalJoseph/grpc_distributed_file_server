@@ -100,25 +100,25 @@ std::string extract_name(std::string filename) {
 
 int my_client_id;
 int pfs_initialize() {
-    // if(verify_all_servers_online() == -1){
-    //     std::cerr << "Servers not online" << std::endl;
-    //     return -1;
-    // }
+    if(verify_all_servers_online() == -1){
+        std::cerr << "Servers not online" << std::endl;
+        return -1;
+    }
     
     // Connect with metaserver using gRPC
     int ret = metaserver_api_initialize();
     if (ret == -1) {
         std::cerr << "Failed to initialize" << std::endl;
-        return ret;
+        return -1;
     } else {
         my_client_id = ret;
     }
 
-    // std::vector<std::string> server_addresses = get_server_addresses();
-    // // Connect with all fileservers (NUM_FILE_SERVERS) using gRPC
-    // for (size_t i = 1; i < server_addresses.size(); i++) {
-    //     fileserver_api_initialize(server_addresses[i]);
-    // }
+    std::vector<std::string> server_addresses = get_server_addresses();
+    // Connect with all fileservers (NUM_FILE_SERVERS) using gRPC
+    for (size_t i = 1; i < NUM_FILE_SERVERS; i++) {
+        fileserver_api_initialize(server_addresses[i]);
+    }
     return my_client_id;
 }
 
@@ -128,16 +128,11 @@ int pfs_finish(int client_id) {
 }
 
 int pfs_create(const char *filename, int stripe_width) {
-    // get the metadata necessary to create the file(s)
-    metaserver_api_create(filename, stripe_width, my_client_id);
-
-    // create files (or send requests) to the appropriate file servers.
-    return 1;
+    return metaserver_api_create(filename, stripe_width, my_client_id);
 }
 
 int pfs_open(const char *filename, int mode) {
-    int fd = metaserver_api_open(filename, mode, my_client_id);
-    return fd;
+    return metaserver_api_open(filename, mode, my_client_id);
 }
 
 int pfs_read(int fd, void *buf, size_t num_bytes, off_t offset) {
@@ -147,36 +142,44 @@ int pfs_read(int fd, void *buf, size_t num_bytes, off_t offset) {
     cache_func_temp();
 
     // ...
+    if (!metaserver_api_check_tokens(fd, offset, offset + num_bytes - 1, 1, my_client_id)) {
+        std::cout << "I don't have the read token for " << offset << "-" << offset + num_bytes - 1 << " so I'm going to request it" << std::endl;
+        metaserver_api_request_token(fd, offset, offset + num_bytes - 1, 1, my_client_id); // 2 = MODE_WRITE
+    } 
 
     std::pair<std::vector<struct Chunk>, std::string> read_instructions = metaserver_api_read(fd, buf, num_bytes, offset, my_client_id);
     if (read_instructions.second == "FAIL") {
         return -1;
     }
     
-    // std::string filename = extract_name(read_instructions.second);
-    // std::vector<std::string> server_addresses = get_server_addresses();
+    std::string filename = extract_name(read_instructions.second);
+    std::vector<std::string> server_addresses = get_server_addresses();
 
-    // std::string total_content = "";
-    // for(struct Chunk &chunk: read_instructions.first){
-    //     std::string cur_content = "";
-    //     std::string chunk_filename = std::to_string(chunk.server_number) + "_" + filename + "_" + std::to_string(chunk.chunk_number);
-    //     std::cout << "Instructed to read from file called " << chunk_filename << " in File Server " << chunk.server_number << ". Start from " << chunk.start_byte << " till " << chunk.end_byte << std::endl;
+    std::string total_content = "";
+    int bytes_read = 0;
+    for(struct Chunk &chunk: read_instructions.first){
+        std::string cur_content = "";
+        std::string chunk_filename = std::to_string(chunk.server_number) + "_" + filename + "_" + std::to_string(chunk.chunk_number);
+        std::cout << "Instructed to read from file called " << chunk_filename << " in File Server " << chunk.server_number << ". Start from " << chunk.start_byte << " till " << chunk.end_byte << std::endl;
         
-    //     std::string fileserver_address = server_addresses[chunk.server_number + 1]; // +1 since 0 is metaserver
-    //     fileserver_api_read(fileserver_address, 
-    //                             cur_content, 
-    //                             chunk_filename, 
-    //                             chunk.chunk_number, 
-    //                             num_bytes, 
-    //                             chunk.start_byte, 
-    //                             chunk.end_byte,
-    //                             offset
-    //     );
-    //     total_content += cur_content;
-    // }
-    // std::memcpy(buf, total_content.c_str(), total_content.size());
-    return 0;
+        std::string fileserver_address = server_addresses[chunk.server_number + 1]; // +1 since 0 is metaserver
+        fileserver_api_read(fileserver_address, 
+                                cur_content, 
+                                chunk_filename, 
+                                chunk.chunk_number, 
+                                num_bytes, 
+                                chunk.start_byte, 
+                                chunk.end_byte,
+                                offset
+        );
+        bytes_read += cur_content.size();
+        total_content += cur_content;
+    }
+    total_content += '\0';
+    std::memcpy(buf, total_content.c_str(), total_content.size());
+    return bytes_read;
 }
+
 
 int pfs_write(int fd, const void *buf, size_t num_bytes, off_t offset) {
     // ...
@@ -185,36 +188,38 @@ int pfs_write(int fd, const void *buf, size_t num_bytes, off_t offset) {
     cache_func_temp();
 
     // ...
-
     if (!metaserver_api_check_tokens(fd, offset, offset + num_bytes - 1, 2, my_client_id)) {
-        std::cout << "I don't have the token for " << offset << "-" << offset + num_bytes - 1 << " so I'm going to request it" << std::endl;
+        std::cout << "I don't have the write token for " << offset << "-" << offset + num_bytes - 1 << " so I'm going to request it" << std::endl;
         metaserver_api_request_token(fd, offset, offset + num_bytes - 1, 2, my_client_id); // 2 = MODE_WRITE
+        // I will definitely have the token at this point
     } 
     
+    // wait for the token to come, won't take too long.
     std::pair<std::vector<struct Chunk>, std::string> instructions = metaserver_api_write(fd, buf, num_bytes, offset, my_client_id);
     if (instructions.second == "FAIL") {
         return -1;
     }
     
-    // std::string filename = extract_name(instructions.second);
-    // std::vector<std::string> server_addresses = get_server_addresses();
-    // for(struct Chunk &chunk: instructions.first){
-    //     std::string chunk_filename = std::to_string(chunk.server_number) + "_" + filename + "_" + std::to_string(chunk.chunk_number);
-    //     std::cout << "Instructed to write to file called " << chunk_filename << " to File Server " << chunk.server_number << ". Start from " << chunk.start_byte << " till " << chunk.end_byte << std::endl;
+    std::string filename = extract_name(instructions.second);
+    std::vector<std::string> server_addresses = get_server_addresses();
+    int bytes_written = 0;
+    for(struct Chunk &chunk: instructions.first){
+        std::string chunk_filename = std::to_string(chunk.server_number) + "_" + filename + "_" + std::to_string(chunk.chunk_number);
+        std::cout << "Instructed to write to file called " << chunk_filename << " to File Server " << chunk.server_number << ". Start from " << chunk.start_byte << " till " << chunk.end_byte << std::endl;
         
-    //     std::string fileserver_address = server_addresses[chunk.server_number + 1]; // +1 since 0 is metaserver
-    //     fileserver_api_write(fileserver_address, 
-    //                             buf, 
-    //                             chunk_filename, 
-    //                             chunk.chunk_number, 
-    //                             num_bytes, 
-    //                             chunk.start_byte, 
-    //                             chunk.end_byte,
-    //                             offset
-    //     );
-    // }
-
-    return 0;
+        std::string fileserver_address = server_addresses[chunk.server_number + 1]; // +1 since 0 is metaserver
+        fileserver_api_write(fileserver_address, 
+                                buf, 
+                                chunk_filename, 
+                                chunk.chunk_number, 
+                                num_bytes, 
+                                chunk.start_byte, 
+                                chunk.end_byte,
+                                offset
+        );
+        bytes_written += (chunk.end_byte - chunk.start_byte + 1);
+    }
+    return bytes_written;
 }
 
 int pfs_close(int fd) {

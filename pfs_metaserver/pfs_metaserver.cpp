@@ -173,7 +173,6 @@ public:
         descriptor.erase(fd);
 
         // delete tokens held by client, since they are closing the file now
-
         auto& ranges = file_tokens_[filename]; // map<FileToken, stream>
         for (auto it = ranges.begin(); it != ranges.end(); ) {
             struct FileToken existing_token = it->first;
