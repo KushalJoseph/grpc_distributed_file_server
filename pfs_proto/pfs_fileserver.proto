@@ -48,7 +48,7 @@ message ReadFileRequest {
     int32 offset = 6;
 }
 message ReadFileResponse {
-    string content = 1;
+    bytes content = 1;
     string message = 2;
     int32 bytes_read = 3;
 }
