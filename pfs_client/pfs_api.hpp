@@ -111,13 +111,15 @@ struct pfs_metadata {
         oss << "Filename: " << filename << "\n";
         oss << "File Size: " << file_size << " bytes\n";
         
-        // char ctime_str[20], mtime_str[20];
-        // struct tm* ctm = localtime(&ctime);
-        // struct tm* mtm = localtime(&mtime);
-        // strftime(ctime_str, sizeof(ctime_str), "%Y-%m-%d %H:%M:%S", ctm);
-        // strftime(mtime_str, sizeof(mtime_str), "%Y-%m-%d %H:%M:%S", mtm);
-        // oss << "Creation Time: " << ctime_str << "\n";
-        // oss << "Modification Time: " << mtime_str << "\n";
+        char ctime_buff[20], mtime_buff[20];
+        struct tm *ctime_tm = localtime(&ctime);
+        strftime(ctime_buff, sizeof(ctime_buff), "%Y-%m-%d %H:%M:%S", ctime_tm);
+        struct tm *mtime_tm = localtime(&mtime);
+        strftime(mtime_buff, sizeof(mtime_buff), "%Y-%m-%d %H:%M:%S", mtime_tm);
+        
+        // Create a formatted string representation
+        oss << "Creation Time: " << ctime_buff << "\n"
+            << "Last Closing Time: " << mtime_buff << "\n";
 
         oss << "File Recipe:\n" << recipe.to_string();
         return oss.str();

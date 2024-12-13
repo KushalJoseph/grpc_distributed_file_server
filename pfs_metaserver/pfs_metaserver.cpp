@@ -25,7 +25,6 @@ private:
     std::unordered_map<int, std::pair<std::string, int>> descriptor;                // descriptor : <filename, mode>
     std::unordered_map<std::string, int> fileNameToDescriptor;                      // filename: descriptor
 
-    // UNDERSTAND THESE
     // filename: [{token - connection to client who owns it}]
     std::map<std::string, std::map<FileToken, ServerReaderWriter<pfsmeta::ServerNotification, pfsmeta::TokenRequest>*>> file_tokens_;
     std::set<ServerReaderWriter<pfsmeta::ServerNotification, pfsmeta::TokenRequest>*> client_streams_;
@@ -83,6 +82,8 @@ public:
         file_metadata.filename[sizeof(file_metadata.filename) - 1] = '\0'; // Ensure null termination
         file_metadata.file_size = 0;
         file_metadata.recipe = recipe;
+        file_metadata.ctime = std::time(nullptr);
+        file_metadata.mtime = 0;
 
         // creation, updation time
         files[filename] = file_metadata;
@@ -129,8 +130,8 @@ public:
         PFSMetadata* pfs_meta = reply->mutable_meta_data();
         pfs_meta->set_filename(meta_data.filename);
         pfs_meta->set_file_size(meta_data.file_size);
-        // pfs_meta->set_ctime(metadata.ctime);
-        // pfs_meta->set_mtime(metadata.mtime);
+        pfs_meta->set_ctime(meta_data.ctime);
+        pfs_meta->set_mtime(meta_data.mtime);
         PFSFileRecipe* file_recipe = pfs_meta->mutable_recipe();
         file_recipe->set_stripe_width(meta_data.recipe.stripe_width);
 
@@ -168,6 +169,7 @@ public:
         if (descriptor.find(fd) == descriptor.end()) return success("File may already be closed!", reply);
         std::string filename = descriptor[fd].first;
 
+        files[filename].mtime = std::time(nullptr);
         // remove all records of the file being open, i.e, erase from the maps.
         fileNameToDescriptor.erase(filename);
         descriptor.erase(fd);
@@ -207,14 +209,14 @@ public:
         if (offset > cur_file_size) return error("Requested Offset " + std::to_string(offset) + ", cannot be greater than current file size, " + std::to_string(cur_file_size), reply);
 
         std::vector<struct Chunk> &chunks = file_metadata.recipe.chunks;
-        int start_chunk = offset / 1024; 
-        int end_chunk = (offset + num_bytes - 1) / 1024;
+        int start_chunk = offset / (PFS_BLOCK_SIZE * STRIPE_BLOCKS); 
+        int end_chunk = (offset + num_bytes - 1) / (PFS_BLOCK_SIZE * STRIPE_BLOCKS);
         int bytes_written = 0;
 
         std::vector<struct Chunk> write_instructions;
         for (int chunk_number = start_chunk; chunk_number <= end_chunk; chunk_number++) {
-            int start_byte_for_instruction = std::max(chunk_number * 1024, offset); // start from the beginning of the chunk, or from the offset.
-            int end_byte_for_instruction = std::min((chunk_number + 1) * 1024 - 1, offset + num_bytes - 1); // end of the chunk, or offset + bytes, MINIMUM
+            int start_byte_for_instruction = std::max(chunk_number * (PFS_BLOCK_SIZE * STRIPE_BLOCKS), offset); // start from the beginning of the chunk, or from the offset.
+            int end_byte_for_instruction = std::min((chunk_number + 1) * (PFS_BLOCK_SIZE * STRIPE_BLOCKS) - 1, offset + num_bytes - 1); // end of the chunk, or offset + bytes, MINIMUM
             int server_number = chunk_number % file_metadata.recipe.stripe_width;
 
             // check if this chunk exists
@@ -267,14 +269,14 @@ public:
 
         struct pfs_metadata &file_metadata = files[filename];
         std::vector<struct Chunk> &chunks = file_metadata.recipe.chunks;
-        int start_chunk = offset / 1024; 
-        int end_chunk = (offset + num_bytes - 1) / 1024;
+        int start_chunk = offset / (PFS_BLOCK_SIZE * STRIPE_BLOCKS); 
+        int end_chunk = (offset + num_bytes - 1) / (PFS_BLOCK_SIZE * STRIPE_BLOCKS);
         int bytes_read = 0;
 
         std::vector<struct Chunk> read_instructions;
         for (int chunk_number = start_chunk; chunk_number <= end_chunk; chunk_number++) {
-            int start_byte_for_instruction = std::max(chunk_number * 1024, offset); // start from the beginning of the chunk, or from the offset.
-            int end_byte_for_instruction = std::min((chunk_number + 1) * 1024 - 1, std::min((int) file_metadata.file_size - 1, offset + num_bytes - 1)); // end of the chunk, or end of file or, offset + bytes, MINIMUM
+            int start_byte_for_instruction = std::max(chunk_number * (PFS_BLOCK_SIZE * STRIPE_BLOCKS), offset); // start from the beginning of the chunk, or from the offset.
+            int end_byte_for_instruction = std::min((chunk_number + 1) * (PFS_BLOCK_SIZE * STRIPE_BLOCKS) - 1, std::min((int) file_metadata.file_size - 1, offset + num_bytes - 1)); // end of the chunk, or end of file or, offset + bytes, MINIMUM
             int server_number = chunk_number % file_metadata.recipe.stripe_width;
 
             // check if this chunk exists
@@ -333,6 +335,8 @@ public:
         int type = request.type();
         int client_id = request.client_id();
         
+        std::cout << "Receieved token request from " << client_id << " for " << filename << (type == 1 ? " read " : " write ") << start_byte << "-" << end_byte << std::endl;
+
         FileToken requested_range{start_byte, end_byte, type, client_id};
 
         std::unique_lock<std::mutex> lock(mutex_);
@@ -343,7 +347,7 @@ public:
             auto* conflicting_stream = it->second;
 
             std::cout << "Checking Ranges for Overlap: " << existing_token.start_byte << "-" << existing_token.end_byte << " VS " << start_byte << "-" << end_byte << std::endl;
-            if (existing_token.overlaps(requested_range)) {
+            if (existing_token.client_id != client_id && existing_token.overlaps(requested_range)) {
                 std::cout << "They Overlap" << std::endl;
                 std::vector<FileToken> new_ranges = existing_token.subtract(requested_range);
 

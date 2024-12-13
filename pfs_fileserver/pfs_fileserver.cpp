@@ -131,7 +131,7 @@ public:
         int offset = request->offset();
         // assert num bytes
 
-        std::pair<int, int> range_within_local_file = {start_byte - chunk_number * 1024, end_byte - chunk_number * 1024};
+        std::pair<int, int> range_within_local_file = {start_byte - chunk_number * (PFS_BLOCK_SIZE * STRIPE_BLOCKS), end_byte - chunk_number * (PFS_BLOCK_SIZE * STRIPE_BLOCKS)};
         std::pair<int, int> range_within_buffer = {start_byte - offset, end_byte - offset};
 
         assert(range_within_local_file.second - range_within_local_file.first == range_within_buffer.second - range_within_buffer.first);
@@ -154,7 +154,7 @@ public:
         int offset = request->offset();
         // assert num bytes
 
-        std::pair<int, int> range_within_local_file = {start_byte - chunk_number * 1024, end_byte - chunk_number * 1024};
+        std::pair<int, int> range_within_local_file = {start_byte - chunk_number * (PFS_BLOCK_SIZE * STRIPE_BLOCKS), end_byte - chunk_number * (PFS_BLOCK_SIZE * STRIPE_BLOCKS)};
         
         std::string buf = "";
         readFromLocalFile(filename, range_within_local_file, buf);

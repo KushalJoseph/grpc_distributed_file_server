@@ -102,9 +102,9 @@ void fileserver_api_read(std::string fileserver_address,
     grpc::Status status = stub->ReadFile(&context, request, &response);
     if (status.ok()) {
         buf = response.content();
-        printf("Write file RPC succeeded: %s\n", response.message().c_str());
+        printf("Read file RPC succeeded: %s\n", response.message().c_str());
     } else {
-        fprintf(stderr, "Write file RPC failed: %s\n", status.error_message().c_str());
+        fprintf(stderr, "Read file RPC failed: %s\n", status.error_message().c_str());
     }
 }
 

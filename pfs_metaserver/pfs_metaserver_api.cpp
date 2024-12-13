@@ -2,8 +2,8 @@
 #include "pfs_proto/pfs_metaserver.grpc.pb.h"
 #include "pfs_proto/pfs_metaserver.pb.h"
 #include "pfs_client/pfs_api.hpp"
+#include "pfs_client/pfs_cache.hpp"
 #include <grpcpp/grpcpp.h>
-
 
 std::unordered_map<std::string, std::set<FileToken>> my_tokens;
 std::unordered_map<int, std::string> descriptor_to_filename; // maps descriptor to filename
@@ -29,13 +29,13 @@ std::unique_ptr<pfsmeta::PFSMetadataServer::Stub> connect_to_metaserver() {
     return stub;
 }
 
+// one object like this for every pair <file, mode>
 struct FileSync {
     std::mutex mtx;
     std::condition_variable cv;
     bool token_ready = false;
 };
-
-// Map to manage synchronization primitives per filename
+// <filename, type> --> FileSync object
 std::map<std::pair<std::string, int>, FileSync> file_sync_map;
 
 void listenForNotifications(grpc::ClientReaderWriter<pfsmeta::TokenRequest, pfsmeta::ServerNotification>* stream) {
@@ -63,7 +63,6 @@ void listenForNotifications(grpc::ClientReaderWriter<pfsmeta::TokenRequest, pfsm
                 std::lock_guard<std::mutex> lock(file_sync.mtx);
                 file_sync.token_ready = true;
             }
-            std::cout << "Received token, resuming" << std::endl;
             file_sync.cv.notify_one();  
         } else if (notification.has_revocation()) {
             const auto& revocation = notification.revocation();
@@ -73,13 +72,11 @@ void listenForNotifications(grpc::ClientReaderWriter<pfsmeta::TokenRequest, pfsm
                 if (first) {
                     first = false;
                     FileToken revoked_token = {range.start_byte(), range.end_byte(), range.type(), this_client_id};
-                    std::cout << "Revoking " << revoked_token.start_byte << " " << revoked_token.end_byte << " " << revoked_token.type << " " << revoked_token.client_id << std::endl;
-                    
-                    if (my_tokens[revocation.filename()].find(revoked_token) == my_tokens[revocation.filename()].end()) {
-                        std::cout << "Could not find this token in the existing tokens" << std::endl; 
-                    } else {
-                        std::cout << "Found, now erasing" << std::endl;
-                    }
+                    std::cout << "Revoking " << revoked_token.start_byte << " " << revoked_token.end_byte << " " << revoked_token.type << " " << revoked_token.client_id << std::endl; 
+
+                    cache_api_invalidate(revocation.filename(), revoked_token);
+
+                    /* Finally, invalidate the token */
                     my_tokens[revocation.filename()].erase(revoked_token);
                 } else {
                     std::cout << "\nGranting Split: [" << range.start_byte() << "-" << range.end_byte() << "]\n";
@@ -125,7 +122,7 @@ int metaserver_api_initialize() {
         std::cout << "Failed to connect to metaserver" << std::endl;
         return -1;
     }
-    
+
     pfsmeta::InitRequest request;
     pfsmeta::InitResponse response;
 
@@ -137,7 +134,6 @@ int metaserver_api_initialize() {
         printf("Initialize RPC succeeded: %s\n", response.message().c_str());
 
         this_client_id = response.client_id();
-        std::cout << "Received client id: " << this_client_id << std::endl;
         Run(this_client_id);
         return this_client_id;
     } else {
@@ -299,7 +295,6 @@ std::pair<std::vector<struct Chunk>, std::string> metaserver_api_read(int fd, co
             chunk.end_byte = instruction.end_byte();
             instructions.push_back(chunk);
         }
-        std::cout << "I have received the instructions from server" << std::endl;
         return {instructions, response.filename()};
     } else {
         fprintf(stderr, "WriteToFile RPC failed: %s\n", status.error_message().c_str());
@@ -332,8 +327,8 @@ int metaserver_api_fstat(int fd, struct pfs_metadata *meta_data, int client_id) 
         strncpy(meta_data->filename, received_meta_data.filename().c_str(), sizeof(meta_data->filename) - 1);
         meta_data->filename[sizeof(meta_data->filename) - 1] = '\0'; // Ensure null-termination
         meta_data->file_size = received_meta_data.file_size();
-        // meta_data->ctime = received_meta_data.ctime();
-        // meta_data->mtime = received_meta_data.mtime();
+        meta_data->ctime = static_cast<time_t>(received_meta_data.ctime());
+        meta_data->mtime = static_cast<time_t>(received_meta_data.mtime());
 
         const pfsmeta::PFSFileRecipe& recipe = received_meta_data.recipe();
         meta_data->recipe.stripe_width = recipe.stripe_width();
@@ -390,7 +385,6 @@ void metaserver_api_request_token(int fd, int start_byte, int end_byte, int type
         std::cout << "Failed to connect to metaserver" << std::endl;
         return;
     }
-    
     pfsmeta::TokenRequest request;
     request.set_file_descriptor(fd);
     request.set_start_byte(start_byte);
@@ -419,7 +413,7 @@ bool metaserver_api_check_tokens(int fd, int start_byte, int end_byte, int type,
     int current_start = start_byte;
     std::cout << "Checking my tokens for " << filename << std::endl;
     for (const auto& token : my_tokens[filename]) {
-        std::cout << "Covering with token " << token.to_string() << std::endl;
+        std::cout << "Trying to cover with token " << token.to_string() << std::endl;
         int token_start = token.start_byte;
         int token_end = token.end_byte;
         int token_type = token.type;

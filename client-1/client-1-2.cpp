@@ -8,6 +8,7 @@
 
 #include "pfs_common/pfs_common.hpp"
 #include "pfs_client/pfs_api.hpp"
+#include "pfs_client/pfs_cache.hpp"
 
 int pfs_print_meta(int pfs_fd, int client_id) {
     struct pfs_metadata mymeta = {0};
