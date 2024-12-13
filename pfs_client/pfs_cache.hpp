@@ -27,6 +27,7 @@ struct CachedBlock {
 class LRUCache {
     size_t max_size; 
     using RangeKey = std::pair<int, int>;
+    struct pfs_execstat client_cache_stats;
 
     std::map<std::string, std::map<RangeKey, CachedBlock>> cache;
     std::list<std::pair<std::string, RangeKey>> lru_list;
@@ -34,7 +35,9 @@ class LRUCache {
     std::map<std::string, std::map<RangeKey, std::list<std::pair<std::string, RangeKey>>::iterator>> lru_positions;
 
 public:
-    LRUCache(size_t size) : max_size(size) {}
+    LRUCache(size_t size) : max_size(size) {
+        client_cache_stats = {0LL, 0LL, 0LL, 0LL, 0LL, 0LL, 0LL};
+    }
 
     int read(const std::string& filename, int start_byte, int end_byte, std::string &result) {
         std::cout << "Querying Cache for " << filename << " from " << start_byte << "-" << end_byte << std::endl;
@@ -70,7 +73,7 @@ public:
             std::cout << "Cache Miss" << std::endl;
             return -1; // Cache miss
         }
-
+        client_cache_stats.num_read_hits++;
         return 0;
     }
 
@@ -79,7 +82,7 @@ public:
         std::cout << "Updating Cache for " << filename << " from " << start_byte << "-" << end_byte << std::endl;
         std::cout << "Updating with content: " << data << std::endl;
         RangeKey range = {start_byte, end_byte};
-        if (cache[filename].size() >= max_size) {
+        if (check_size()) {
             evict();
         }
 
@@ -144,6 +147,7 @@ public:
 
         // Remove invalidated blocks
         for (const auto& range : to_invalidate) {
+            client_cache_stats.num_invalidations++;
             cached_blocks.erase(range);
         }
 
@@ -152,6 +156,38 @@ public:
             cached_blocks[new_range] = block;
             std::cout << "Added new cache block [" << new_range.first << "-" << new_range.second << "]\n";
         }
+    }
+
+    void close(std::string filename) {
+        if (cache.find(filename) != cache.end()) {
+            for (const auto& [range_key, _] : cache[filename]) {
+                client_cache_stats.num_close_bytes_evicted += (range_key.second - range_key.first + 1);
+                client_cache_stats.num_close_evictions++;
+            }
+            cache.erase(filename);
+        }
+
+        auto it = lru_list.begin();
+        while (it != lru_list.end()) {
+            if (it->first == filename) {
+                it = lru_list.erase(it);
+            } else {
+                ++it;
+            }
+        }
+
+        // Evict from LRU positions
+        if (lru_positions.find(filename) != lru_positions.end()) {
+            lru_positions.erase(filename);
+        }
+    }
+
+    int execstat(struct pfs_execstat *execstat_data) {
+        if (execstat_data == nullptr) {
+            return -1;
+        }
+        *execstat_data = client_cache_stats;
+        return 0;
     }
 
 private:
@@ -165,14 +201,15 @@ private:
         lru_list.emplace_front(filename, range);
         file_positions[range] = lru_list.begin();
 
-        if (lru_list.size() > max_size) {
+        if (check_size()) {
             evict();
         }
     }
 
     void evict() {
         if (lru_list.empty()) return;
-
+        
+        client_cache_stats.num_evictions++;
         auto [filename, range] = lru_list.back();
         lru_list.pop_back();
         lru_positions[filename].erase(range);
@@ -186,6 +223,18 @@ private:
             cache.erase(filename);
         }
     }
+
+    bool check_size() {
+        std::map<std::string, std::map<RangeKey, CachedBlock>> cache;
+        int cur_size = 0;
+        for (auto it: cache) {
+            for (auto jt: it.second) {
+                cur_size += (jt.first.second - jt.first.first + 1);
+                if (cur_size > max_size) return true;
+            }
+        }
+        return false;
+    }
 };
 
 int cache_api_initialize(int lru_size);
@@ -195,4 +244,8 @@ int cache_api_read(std::string filename, int start_byte, int end_byte, std::stri
 void cache_api_update(std::string filename, int start_byte, int end_byte, std::string data);
 
 void cache_api_invalidate(std::string filename, struct FileToken revoked_token);
+
+void cache_api_close(std::string filename);
+
+int cache_api_execstat(struct pfs_execstat *execstat_data);
 

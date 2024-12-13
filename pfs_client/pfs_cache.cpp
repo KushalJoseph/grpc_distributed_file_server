@@ -21,4 +21,13 @@ void cache_api_invalidate(std::string filename, struct FileToken revoked_token) 
     return cache.invalidate(filename, revoked_token);
 }
 
+void cache_api_close(std::string filename) {
+    return cache.close(filename);
+}
+
+int cache_api_execstat(struct pfs_execstat *execstat_data) {
+    return cache.execstat(execstat_data);
+}
+
+
 

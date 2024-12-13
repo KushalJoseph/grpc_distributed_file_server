@@ -134,6 +134,20 @@ struct pfs_execstat {
     long num_invalidations;
     long num_close_writebacks;
     long num_close_evictions;
+    long num_close_bytes_evicted;
+
+    std::string to_string() const {
+        std::ostringstream oss;
+        oss << "num_read_hits: " << num_read_hits
+            << ", num_write_hits: " << num_write_hits
+            << ", num_evictions: " << num_evictions
+            << ", num_writebacks: " << num_writebacks
+            << ", num_invalidations: " << num_invalidations
+            << ", num_close_writebacks: " << num_close_writebacks
+            << ", num_close_evictions: " << num_close_evictions
+            << ", num_close_bytes_evicted: " << num_close_bytes_evicted;
+        return oss.str();
+    }
 };
 
 int pfs_initialize();

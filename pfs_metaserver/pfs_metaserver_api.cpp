@@ -8,6 +8,16 @@
 std::unordered_map<std::string, std::set<FileToken>> my_tokens;
 std::unordered_map<int, std::string> descriptor_to_filename; // maps descriptor to filename
 int this_client_id;
+std::unique_ptr<grpc::ClientReaderWriter<pfsmeta::TokenRequest, pfsmeta::ServerNotification>> stream;
+
+// one object like this for every pair <file, mode>
+struct FileSync {
+    std::mutex mtx;
+    std::condition_variable cv;
+    bool token_ready = false;   
+};
+// <filename, type> --> FileSync object
+std::map<std::pair<std::string, int>, FileSync> file_sync_map;
 
 std::unique_ptr<pfsmeta::PFSMetadataServer::Stub> connect_to_metaserver() {
     // Step 0: Read the server's address and port from a file or configuration
@@ -28,15 +38,6 @@ std::unique_ptr<pfsmeta::PFSMetadataServer::Stub> connect_to_metaserver() {
 
     return stub;
 }
-
-// one object like this for every pair <file, mode>
-struct FileSync {
-    std::mutex mtx;
-    std::condition_variable cv;
-    bool token_ready = false;
-};
-// <filename, type> --> FileSync object
-std::map<std::pair<std::string, int>, FileSync> file_sync_map;
 
 void listenForNotifications(grpc::ClientReaderWriter<pfsmeta::TokenRequest, pfsmeta::ServerNotification>* stream) {
     pfsmeta::ServerNotification notification;
@@ -98,7 +99,6 @@ void listenForNotifications(grpc::ClientReaderWriter<pfsmeta::TokenRequest, pfsm
     }
 }
 
-std::unique_ptr<grpc::ClientReaderWriter<pfsmeta::TokenRequest, pfsmeta::ServerNotification>> stream;
 void Run(int client_id) {
     auto stub = connect_to_metaserver();
     if (!stub) {
@@ -128,7 +128,6 @@ int metaserver_api_initialize() {
 
     grpc::ClientContext context;
     
-
     grpc::Status status = stub->Initialize(&context, request, &response);
     if (status.ok()) {
         printf("Initialize RPC succeeded: %s\n", response.message().c_str());
@@ -438,7 +437,7 @@ bool metaserver_api_check_tokens(int fd, int start_byte, int end_byte, int type,
     return false;
 }
 
+int metaserver_api_execstat(struct pfs_execstat *execstat_data) {
 
-
-
+}
 

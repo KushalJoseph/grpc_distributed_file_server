@@ -52,7 +52,7 @@ int main(int argc, char *argv[]) {
     }
 
     // Write the byte 0~1023 to pfs_file1 at offset 0
-    ret = pfs_write(pfs_fd, (void *)buf, 4096, 4096);
+    ret = pfs_write(pfs_fd, (void *)buf, 4096, 0);
     if (ret == -1) {
         fprintf(stderr, "Write error to PFS file.\n");
         return -1;
@@ -137,6 +137,14 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "File Metadata Read error to PFS file.\n");
         return -1;
     }
+
+    struct pfs_execstat mystat = {0};
+    ret = pfs_execstat(&mystat);
+    if (ret != -1) {
+        std::cout << "Cache Stats: " << std::endl;
+        std::cout << mystat.to_string() << std::endl;
+    }
+    return ret;
 
     // mymeta = {0};
     // ret = pfs_fstat(fd2, &mymeta);

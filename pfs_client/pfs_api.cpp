@@ -8,7 +8,9 @@
 #include "../pfs_proto/pfs_fileserver.pb.h"    
 #include "../pfs_proto/pfs_fileserver.grpc.pb.h" 
 
+/* fd --> filename */
 std::unordered_map<int, std::string> fd_to_filename;
+int my_client_id;
 
 /* Given a server address, checks if it's online */
 bool is_server_online(const std::string& server_address, std::string serverType) {
@@ -97,7 +99,6 @@ std::string extract_name(std::string filename) {
     return filename.substr(0, dot_pos);
 }
 
-int my_client_id;
 int pfs_initialize() {
     if(verify_all_servers_online() == -1){
         std::cerr << "Servers not online" << std::endl;
@@ -238,6 +239,7 @@ int pfs_write(int fd, const void *buf, size_t num_bytes, off_t offset) {
 }
 
 int pfs_close(int fd) {
+    cache_api_close(fd_to_filename[fd]);
     fd_to_filename.erase(fd);
     return metaserver_api_close(fd, my_client_id);
 }
@@ -266,6 +268,5 @@ int pfs_fstat(int fd, struct pfs_metadata *meta_data) {
 }
 
 int pfs_execstat(struct pfs_execstat *execstat_data) {
-
-    return 0;
+    return cache_api_execstat(execstat_data);
 }

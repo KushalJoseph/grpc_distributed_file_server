@@ -23,6 +23,8 @@ void metaserver_api_request_token(int fd, int start_byte, int end_byte, int mode
 
 bool metaserver_api_check_tokens(int fd, int start_byte, int end_byte, int mode, int client_id);
 
+int metaserver_api_execstat(struct pfs_execstat *execstat_data);
+
 /* <instructions, filename */
 std::pair<std::vector<struct Chunk>, std::string> metaserver_api_write(int fd, const void *buf, size_t num_bytes, off_t offset, int client_id);
 

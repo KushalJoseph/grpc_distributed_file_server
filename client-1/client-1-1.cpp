@@ -41,7 +41,7 @@ int main(int argc, char *argv[]) {
     ret = pfs_create("pfs_file1", 3); // stripe_width
     if (ret == -1) {
         fprintf(stderr, "Unable to create a PFS file.\n");
-        return -1;
+        // return -1;
     }
 
     // Open the PFS file in write mode
@@ -188,11 +188,20 @@ int main(int argc, char *argv[]) {
     // } else
     //     printf("%s:%s: Wrote %d bytes to the PFS file.\n", __FILE__, __func__, ret);
 
+
     ret = pfs_close(pfs_fd);
     if (ret == -1) {
         fprintf(stderr, "Error closing PFS file.\n");
         return -1;
     }
+
+    struct pfs_execstat mystat = {0};
+    ret = pfs_execstat(&mystat);
+    if (ret != -1) {
+        std::cout << "Cache Stats: " << std::endl;
+        std::cout << mystat.to_string() << std::endl;
+    }
+    return ret;
     // ret = pfs_close(fd2);
     // if (ret == -1) {
     //     fprintf(stderr, "Error closing PFS file.\n");
