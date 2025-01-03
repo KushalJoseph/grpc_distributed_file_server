@@ -125,7 +125,6 @@ int pfs_initialize() {
 }
 
 int pfs_finish(int client_id) {
-
     return 0;
 }
 
@@ -148,8 +147,6 @@ int pfs_open(const char *filename, int mode) {
     4. Send received instructions to respective fileservers, and collect the results, one by one
  */
 int pfs_read(int fd, void *buf, size_t num_bytes, off_t offset) {
-    // ...
-
     // Check client cache
     std::string total_content = "";
     int s_byte = (int) offset, e_byte = (int) s_byte + (int) num_bytes - 1;
@@ -200,12 +197,9 @@ int pfs_read(int fd, void *buf, size_t num_bytes, off_t offset) {
 
 
 int pfs_write(int fd, const void *buf, size_t num_bytes, off_t offset) {
-    // ...
-
     // Check client cache
     cache_func_temp();
 
-    // ...
     if (!metaserver_api_check_tokens(fd, offset, offset + num_bytes - 1, 2, my_client_id)) {
         std::cout << "I don't have the write token for " << offset << "-" << offset + num_bytes - 1 << " so I'm going to request it" << std::endl;
         metaserver_api_request_token(fd, offset, offset + num_bytes - 1, 2, my_client_id); // 2 = MODE_WRITE

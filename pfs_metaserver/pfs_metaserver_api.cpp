@@ -43,12 +43,6 @@ void listenForNotifications(grpc::ClientReaderWriter<pfsmeta::TokenRequest, pfsm
     pfsmeta::ServerNotification notification;
     while (stream->Read(&notification)) {
         std::cout << "\n\nHave received a notification" << std::endl;
-        for (auto it: my_tokens) {
-            std::cout << "Tokens BEFORE for " << it.first << std::endl;
-            for (auto jt: it.second) {
-                std::cout << jt.start_byte << " " << jt.end_byte << " " << jt.type << " " << jt.client_id << std::endl;
-            }
-        }
         // Process notifications (grants or revocations)
         if (notification.has_grant()) {
             const auto& grant = notification.grant();
@@ -73,8 +67,6 @@ void listenForNotifications(grpc::ClientReaderWriter<pfsmeta::TokenRequest, pfsm
                 if (first) {
                     first = false;
                     FileToken revoked_token = {range.start_byte(), range.end_byte(), range.type(), this_client_id};
-                    std::cout << "Revoking " << revoked_token.start_byte << " " << revoked_token.end_byte << " " << revoked_token.type << " " << revoked_token.client_id << std::endl; 
-
                     cache_api_invalidate(revocation.filename(), revoked_token);
 
                     /* Finally, invalidate the token */
@@ -83,16 +75,9 @@ void listenForNotifications(grpc::ClientReaderWriter<pfsmeta::TokenRequest, pfsm
                     std::cout << "\nGranting Split: [" << range.start_byte() << "-" << range.end_byte() << "]\n";
                     FileToken split_token = {range.start_byte(), range.end_byte(), range.type(), this_client_id};
                     if (range.start_byte() <= range.end_byte()) {
-                        std::cout << "inserting " << split_token.to_string() << std::endl;
                         my_tokens[revocation.filename()].insert(split_token);
                     }   
                 }
-            }
-        }
-        for (auto it: my_tokens) {
-            std::cout << "\nTokens AFTER for " << it.first << std::endl;
-            for (auto jt: it.second) {
-                std::cout << "[" << jt.start_byte << "-" << jt.end_byte << "] " << jt.type << " " << jt.client_id << std::endl;
             }
         }
         std::cout << std::endl;
@@ -410,7 +395,6 @@ bool metaserver_api_check_tokens(int fd, int start_byte, int end_byte, int type,
     if (my_tokens.find(filename) == my_tokens.end()) return false;
 
     int current_start = start_byte;
-    std::cout << "Checking my tokens for " << filename << std::endl;
     for (const auto& token : my_tokens[filename]) {
         std::cout << "Trying to cover with token " << token.to_string() << std::endl;
         int token_start = token.start_byte;
